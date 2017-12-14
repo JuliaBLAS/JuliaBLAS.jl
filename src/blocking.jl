@@ -71,13 +71,13 @@ struct normalize_chunk_size{subChunk}; end
     return new_ch
 end
 
-unsafe_div(a::Int64,b::Int64) = Base.llvmcall("""%3 = sdiv i64 %0, %1
-                                              ret i64 %3""", Int64, Tuple{Int64, Int64}, a, b)
-unsafe_div(a::Int32,b::Int32) = Base.llvmcall("""%3 = sdiv i32 %0, %1
-                                              ret i32 %3""", Int32, Tuple{Int32, Int32}, a, b)
-unsafe_rem(a::Int64,b::Int64) = Base.llvmcall("""%3 = srem i64 %0, %1
-                                              ret i64 %3""", Int64, Tuple{Int64, Int64}, a, b)
-unsafe_rem(a::Int32,b::Int32) = Base.llvmcall("""%3 = srem i32 %0, %1
-                                              ret i32 %3""", Int32, Tuple{Int32, Int32}, a, b)
-
-unsafe_divrem(a, b) = (unsafe_div(a,b), unsafe_rem(a,b))
+#unsafe_div(a::Int64,b::Int64) = Base.llvmcall("""%3 = sdiv i64 %0, %1
+#                                              ret i64 %3""", Int64, Tuple{Int64, Int64}, a, b)
+#unsafe_div(a::Int32,b::Int32) = Base.llvmcall("""%3 = sdiv i32 %0, %1
+#                                              ret i32 %3""", Int32, Tuple{Int32, Int32}, a, b)
+#unsafe_rem(a::Int64,b::Int64) = Base.llvmcall("""%3 = srem i64 %0, %1
+#                                              ret i64 %3""", Int64, Tuple{Int64, Int64}, a, b)
+#unsafe_rem(a::Int32,b::Int32) = Base.llvmcall("""%3 = srem i32 %0, %1
+#                                              ret i32 %3""", Int32, Tuple{Int32, Int32}, a, b)
+#
+#unsafe_divrem(a, b) = (unsafe_div(a,b), unsafe_rem(a,b))
