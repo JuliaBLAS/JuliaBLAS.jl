@@ -3,3 +3,4 @@ using Base.Test
 
 include("memory_test.jl")
 include("smallmatrix.jl")
+include("kernel.jl")
