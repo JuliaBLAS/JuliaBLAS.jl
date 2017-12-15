@@ -1,6 +1,6 @@
 using CpuId
 
-const prefetchShift = 512
+const prefetchshift = 512
 const main_nr       = 6
 const main_mr       = 4
 const c1, c2, c3    = cachesize()
@@ -16,7 +16,7 @@ function _prefetch_r(ptr::Ptr{T}) where T
                   Void, Tuple{UInt64}, UInt64(ptr))
 end
 
-function prefetch_r(::Type{Val{M}}, ::Type{Val{N}}, ::Type{Val{Rem}}, ::Type{Val{Shift}}, ptr::Ptr{T}, ld) where {M,N,Rem,Shift,T}
+@inline function prefetch_r(::Type{Val{M}}, ::Type{Val{N}}, ::Type{Val{Rem}}, ::Type{Val{Shift}}, ptr::Ptr{T}, ld) where {M,N,Rem,Shift,T}
     for n in 0:N-1
         for m in 0:(M÷64 + (M % 64 >= Rem) - 1)
             _prefetch_r(ptr + M * 64 + Shift + ld * N)
