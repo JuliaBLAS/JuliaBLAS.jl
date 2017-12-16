@@ -1,6 +1,3 @@
-using JuliaBLAS
-using Base.Test
+using JuliaBLAS, Test
 
-include("memory_test.jl")
-include("smallmatrix.jl")
 include("kernel.jl")
