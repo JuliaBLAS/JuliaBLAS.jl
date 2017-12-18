@@ -4,7 +4,10 @@ using SIMD#, CpuId
 
 export mul!
 
+# platform info
 const prefetchshift = 512
+#const alignment = sizeof(Float64)
+
 #const main_nr       = 6
 #const main_mr       = 4
 #const c1, c2, c3    = cachesize()
@@ -38,6 +41,25 @@ end
             _prefetch_r(ptr + M * 64 + Shift + ld * N)
         end
     end
+end
+
+check_alignment(x::Integer) = (x & -x) > (x - 1) && x >= sizeof(Ptr{Void})
+
+posix_memalign(pptr::Ref{Ptr{Void}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
+
+mutable struct BLASVec{T}
+    vec::Vector{T}
+end
+
+function BLASVec{T}(::Uninitialized, m::Integer) where T
+    mem = Ref{Ptr{Void}}()
+    alignment = sizeof(Float64)
+    @assert check_alignment(alignment)
+    # TODO error handling
+    return_code = posix_memalign(mem, alignment, m*sizeof(T))
+    ptr = Ptr{T}(mem[])
+    x = BLASVec(unsafe_wrap(Vector{T}, ptr, m, false))
+    finalizer(x->Base.Libc.free(pointer(x.vec)), x)
 end
 
 include("kernel.jl")
