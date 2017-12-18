@@ -1,6 +1,6 @@
 module JuliaBLAS
 
-using SIMD#, CpuId
+using SIMD, CpuId
 
 export mul!
 
@@ -8,10 +8,10 @@ export mul!
 const prefetchshift = 512
 #const alignment = sizeof(Float64)
 
-#const main_nr       = 6
-#const main_mr       = 4
-#const c1, c2, c3    = cachesize()
-#const line          = cachelinesize()
+const main_nr       = 6
+const main_mr       = 8
+const c1, c2, c3    = cachesize()
+const line          = cachelinesize()
 
 # Wrap ‘llvm.prefetch‘ Intrinsic
 # https://llvm.org/docs/LangRef.html#llvm-prefetch-intrinsic
@@ -47,20 +47,34 @@ check_alignment(x::Integer) = (x & -x) > (x - 1) && x >= sizeof(Ptr{Void})
 
 posix_memalign(pptr::Ref{Ptr{Void}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
 
-mutable struct BLASVec{T}
+mutable struct BLASVec{T} <: DenseVector{T}
     vec::Vector{T}
+    incC::Int
+    incR::Int
 end
 
-function BLASVec{T}(::Uninitialized, m::Integer) where T
+function allocate(::Type{T}, m) where T
     mem = Ref{Ptr{Void}}()
     alignment = sizeof(Float64)
     @assert check_alignment(alignment)
     # TODO error handling
     return_code = posix_memalign(mem, alignment, m*sizeof(T))
     ptr = Ptr{T}(mem[])
-    x = BLASVec(unsafe_wrap(Vector{T}, ptr, m, false))
-    finalizer(x->Base.Libc.free(pointer(x.vec)), x)
 end
+
+function BLASVec{T}(ptr::Ptr{T}, m::Int, n::Int, final::Bool) where T
+    x = BLASVec(unsafe_wrap(Vector{T}, ptr, m*n, false), m, 1)
+    final && finalizer(x->Base.Libc.free(pointer(x.vec)), x)
+    x
+end
+
+import Base: getindex, size, isassigned, show
+getindex(v::BLASVec, i::Int) where T = getindex(v.vec, Int(i))
+getindex(v::BLASVec, i::Int, j::Int) where T = getindex(v.vec, Int(i)*v.incC+Int(j)*v.incR)
+size(v::BLASVec{T}) where T = size(v.vec)
+isassigned(v::BLASVec{T}, i::Int) where T = isassigned(v.vec, Int(i))
+isassigned(v::BLASVec{T}, i::Int, j::Int) where T = isassigned(v.vec, Int(i)*v.incC+Int(j)*v.incR)
+show(io::IO, m::MIME"text/plain", v::BLASVec{T}) where T = show(io, m, v.vec)
 
 include("kernel.jl")
 include("blocking.jl")
