@@ -2,7 +2,7 @@ using SIMD
 
 const RegisterWidth = 256
 
-function pack_b_nano(::Type{Val{N}}, ::Type{Val{P}}, ::Type{Val{Conj}}, ::Type{Val{elemStride}}, length::LinAlg.BlasInt, stride::LinAlg.BlasInt, from::Ptr{F}, to::Ptr{T}) where {N, P, Conj, elemStride, F, T}
+function pack_b_nano!(::Type{Val{N}}, ::Type{Val{P}}, ::Type{Val{Conj}}, ::Type{Val{Elemstride}}, length::Int, stride::Int, from::Ptr{F}, to::Ptr{T}) where {N, P, Conj, Elemstride, F, T}
     SIZEF = sizeof(F)
     SIZET = sizeof(T)
     s = P * N
@@ -36,7 +36,15 @@ function pack_b_nano(::Type{Val{N}}, ::Type{Val{P}}, ::Type{Val{Conj}}, ::Type{V
     return nothing
 end
 
-function pack_a_nano(::Type{Val{N}}, ::Type{Val{P}}, ::Type{Val{Conj}}, ::Type{Val{elemStride}}, length::LinAlg.BlasInt, stride::LinAlg.BlasInt, from::Ptr{F}, to::Ptr{T}) where {N, P, Conj, elemStride, F, T}
+@inline function pack_a!(Type{Val{N}}, A::StridedMatrix{T}, stridemat::StridedMatrix{C}, kernel) where {N,T,C}
+    ex = Expr(:block)
+    for i in 0:M*N-1
+        push!( ex.args, :(kernel(Val{N}, Val{P}, Val{Conj}, length(A), elemstride, stride, stridemat, A)) )
+    end
+    ex
+end
+
+function pack_a_nano!(::Type{Val{N}}, ::Type{Val{P}}, ::Type{Val{Conj}}, ::Type{Val{Elemstride}}, length::Int, stride::Int, from::Ptr{F}, to::Ptr{T}) where {N, P, Conj, Elemstride, F, T}
     SIZEF = sizeof(F)
     SIZET = sizeof(real(T))
     s = N*P
