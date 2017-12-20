@@ -1,6 +1,16 @@
 using SIMD
 
-@inline @generated function _ker!(::Type{Val{MV}}, ::Type{Val{N}}, len, A::Ptr{T}, B::Ptr{T}, C::Ptr{T}) where {MV,N,T}
+# compute MC×KC * KC×N
+# FIXME: don't using hardcoded block size
+function gebp!(_C::BLASVec{T}, _A::BLASVec{T}, _B::BLASVec{T}, N::Int) where T
+    for j in 0:N-1
+        for i in 0:main_mc÷main_mr-1
+            _ker!(Val{main_mr}, Val{main_nr}, main_kc, pointer(_A.vec, 1+i*main_mr), pointer(_B.vec, 1+j*main_kc), pointer(_C.vec, 1+i*main_mr+j*main_nr))
+        end
+    end
+end
+
+@inline @generated function _ker!(::Type{Val{MV}}, ::Type{Val{N}}, len::Int, A::Ptr{T}, B::Ptr{T}, C::Ptr{T}) where {MV,N,T}
     # AVX256
     VL = (256÷8)÷sizeof(T)
     VT = Vec{VL, T}
@@ -22,7 +32,7 @@ using SIMD
     push!( mainloop, :(prefetch_r( Val{$(sizeof(VT)*M)}, Val{1}, Val{8}, Val{prefetchshift}, A, 0 )) )
     # load Ai...
     for i in 0:M-1
-        push!( mainloop, :($(Symbol(:A, i)) = vload($VT, A+$(i*sizeof(VT)))) )
+        push!( mainloop, :($(Symbol(:A, i)) = vloada($VT, A+$(i*sizeof(VT)))) )
     end
 
     for u in 0:(N÷2+N%2-1)

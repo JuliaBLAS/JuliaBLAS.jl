@@ -1,5 +1,4 @@
 using Test, JuliaBLAS, BenchmarkTools
-import JuliaBLAS.BLASPtr
 
 @testset "BLAS level3 kernel" begin
     for T in (Float64, Float32)
@@ -32,4 +31,18 @@ end
         end
         @test_throws AssertionError JuliaBLAS._mul!(Val{5}, rand(T, 5, 5), rand(T, 5, 5), rand(T, 5, 5))
     end
+end
+
+foo() = begin
+    T = Float64
+    n = 1000
+    SIZE = sizeof(T)
+    a_length = JuliaBLAS.main_mc * JuliaBLAS.main_kc * SIZE
+    b_length = JuliaBLAS.main_kc * SIZE * n
+    c_length = JuliaBLAS.main_mc * n * SIZE
+    mem = JuliaBLAS.allocate(T, a_length + b_length + c_length)
+    A = JuliaBLAS.BLASVec{T}(mem, JuliaBLAS.main_mc, JuliaBLAS.main_kc, true)
+    B = JuliaBLAS.BLASVec{T}(mem + a_length, JuliaBLAS.main_kc, n, false)
+    C = JuliaBLAS.BLASVec{T}(mem + a_length + b_length, JuliaBLAS.main_mc, n, false)
+    JuliaBLAS.gebp!(C, A, B, n)
 end

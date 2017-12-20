@@ -1,17 +1,24 @@
 module JuliaBLAS
 
-using SIMD, CpuId
+using SIMD#, CpuId
 
 export mul!
 
 # platform info
 const prefetchshift = 512
+const RegisterWidth = 256
 #const alignment = sizeof(Float64)
-
+# block size
+const main_mc       = 64
+const main_kc       = 64
+# panel size
+const main_nc       = 512
+# micro block size
 const main_nr       = 6
 const main_mr       = 8
-const c1, c2, c3    = cachesize()
-const line          = cachelinesize()
+# CPU
+#const c1, c2, c3    = cachesize()
+#const line          = cachelinesize()
 
 # Wrap ‘llvm.prefetch‘ Intrinsic
 # https://llvm.org/docs/LangRef.html#llvm-prefetch-intrinsic
@@ -55,7 +62,7 @@ end
 
 function allocate(::Type{T}, m) where T
     mem = Ref{Ptr{Void}}()
-    alignment = sizeof(Float64)
+    alignment = sizeof(Float64)*4
     @assert check_alignment(alignment)
     # TODO error handling
     return_code = posix_memalign(mem, alignment, m*sizeof(T))
