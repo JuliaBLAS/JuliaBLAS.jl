@@ -5,6 +5,7 @@ using SIMD
 function gebp!(_C::BLASVec{T}, _A::BLASVec{T}, _B::BLASVec{T}, N::Int) where T
     for j in 0:N-1
         for i in 0:main_mc÷main_mr-1
+            #_ker!(Val{main_mr}, Val{main_nr}, main_kc, pointer(_A.vec, 1+i*main_mr), pointer(_B.vec, 1+j*main_kc), pointer(_C.vec, 1+i*main_mr+j*main_nr))
             _ker!(Val{main_mr}, Val{main_nr}, main_kc, pointer(_A.vec, 1+i*main_mr), pointer(_B.vec, 1+j*main_kc), pointer(_C.vec, 1+i*main_mr+j*main_nr))
         end
     end

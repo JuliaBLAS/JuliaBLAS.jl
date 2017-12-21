@@ -1,6 +1,6 @@
 module JuliaBLAS
 
-using SIMD#, CpuId
+using SIMD, CpuId
 
 export mul!
 
@@ -17,8 +17,8 @@ const main_nc       = 512
 const main_nr       = 6
 const main_mr       = 8
 # CPU
-#const c1, c2, c3    = cachesize()
-#const line          = cachelinesize()
+const c1, c2, c3    = cachesize()
+const line          = cachelinesize()
 
 # Wrap ‘llvm.prefetch‘ Intrinsic
 # https://llvm.org/docs/LangRef.html#llvm-prefetch-intrinsic
@@ -35,7 +35,7 @@ const main_mr       = 8
                    call void @llvm.prefetch(i8* %ptr, i32 %1, i32 %2, i32 %3)
                    ret void
                    """),
-                  Void, Tuple{UInt64, Int32, Int32, Int32},
+                  Nothing, Tuple{UInt64, Int32, Int32, Int32},
                   UInt64(address), Int32(rw), Int32(locality), Int32(cachetype))
 end
 
@@ -50,19 +50,21 @@ end
     end
 end
 
-check_alignment(x::Integer) = (x & -x) > (x - 1) && x >= sizeof(Ptr{Void})
+check_alignment(x::Integer) = (x & -x) > (x - 1) && x >= sizeof(Ptr{Nothing})
 
-posix_memalign(pptr::Ref{Ptr{Void}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
+posix_memalign(pptr::Ref{Ptr{Nothing}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Nothing}}, Csize_t, Csize_t), pptr, alignment, size)
 
 mutable struct BLASVec{T} <: DenseVector{T}
-    vec::Vector{T}
+    #vec::Vector{T}
+    ptr::Ptr{T}
+    len::Int
     incC::Int
     incR::Int
 end
 
 function allocate(::Type{T}, m) where T
-    mem = Ref{Ptr{Void}}()
-    alignment = sizeof(Float64)*4
+    mem = Ref{Ptr{Nothing}}()
+    alignment = sizeof(Float64)*4*4
     @assert check_alignment(alignment)
     # TODO error handling
     return_code = posix_memalign(mem, alignment, m*sizeof(T))
@@ -70,18 +72,20 @@ function allocate(::Type{T}, m) where T
 end
 
 function BLASVec{T}(ptr::Ptr{T}, m::Int, n::Int, final::Bool) where T
-    x = BLASVec(unsafe_wrap(Vector{T}, ptr, m*n, false), m, 1)
-    final && finalizer(x->Base.Libc.free(pointer(x.vec)), x)
+    #x = BLASVec(unsafe_wrap(Vector{T}, ptr, m*n, false), m, 1)
+    x = BLASVec(ptr, m*n, m, 1)
+    #final && finalizer(x->Base.Libc.free(pointer(x.vec)), x)
+    final && finalizer(x->Base.Libc.free(x.ptr), x)
     x
 end
 
-import Base: getindex, size, isassigned, show
-getindex(v::BLASVec, i::Int) where T = getindex(v.vec, Int(i))
-getindex(v::BLASVec, i::Int, j::Int) where T = getindex(v.vec, Int(i)*v.incC+Int(j)*v.incR)
-size(v::BLASVec{T}) where T = size(v.vec)
-isassigned(v::BLASVec{T}, i::Int) where T = isassigned(v.vec, Int(i))
-isassigned(v::BLASVec{T}, i::Int, j::Int) where T = isassigned(v.vec, Int(i)*v.incC+Int(j)*v.incR)
-show(io::IO, m::MIME"text/plain", v::BLASVec{T}) where T = show(io, m, v.vec)
+import Base: getindex, size, isassigned#, show
+getindex(v::BLASVec, i::Int) where T = unsafe_load(v.ptr, i)
+getindex(v::BLASVec, i::Int, j::Int) where T = unsafe_load(v.ptr, i*v.incC+j*v.incR)
+size(v::BLASVec{T}) where T = (v.len,)
+isassigned(v::BLASVec{T}, i::Int) where T = v.len >= i > 0
+isassigned(v::BLASVec{T}, i::Int, j::Int) where T = isassigned(v, i*v.incC+j*v.incR)
+#show(io::IO, m::MIME"text/plain", v::BLASVec{T}) where T = show(io, m, v.vec)
 
 include("kernel.jl")
 include("blocking.jl")
