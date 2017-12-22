@@ -26,8 +26,8 @@ end
     else
         kc = normalize_chunk_size(Val{main_mr}, kc, k)
     end
-    a_length = kc * mc * SIZE
-    b_length = kc * SIZE * n
+    a_length = mc * kc
+    b_length = kc * n
     mem = allocate(T, a_length + b_length + prefetchshift)
     A = BLASVec{T}(mem, mc, kc, true)
     B = BLASVec{T}(mem + a_length, kc, n, false)
