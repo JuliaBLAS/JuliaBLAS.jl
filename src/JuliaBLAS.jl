@@ -52,7 +52,19 @@ end
 
 check_alignment(x::Integer) = (x & -x) > (x - 1) && x >= sizeof(Ptr{Void})
 
-posix_memalign(pptr::Ref{Ptr{Void}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
+#posix_memalign(pptr::Ref{Ptr{Void}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
+function memalign(alignment::Integer, size::Integer)
+    @static if !is_windows()
+        pptr = Ref{Ptr{Void}}(C_NULL)
+        ret_code = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
+        ptr = pptr[]
+        Base.Libc.errno(ret_code)
+    else
+        ptr = ccall(:_aligned_malloc, Ptr{Void}, (Csize_t, Csize_t), size, alignment)
+    end
+    @assert !(ptr === C_NULL) "Allocation failed with $(Base.Libc.strerror())"
+    return ptr
+end
 
 mutable struct BLASVec{T} <: DenseVector{T}
     #vec::Vector{T}
@@ -63,12 +75,11 @@ mutable struct BLASVec{T} <: DenseVector{T}
 end
 
 function allocate(::Type{T}, m) where T
-    mem = Ref{Ptr{Void}}()
+    #mem = Ref{Ptr{Void}}()
     alignment = sizeof(Float64)*4
     @assert check_alignment(alignment)
-    # TODO error handling
-    return_code = posix_memalign(mem, alignment, m*sizeof(T))
-    ptr = Ptr{T}(mem[])
+    ptr = memalign(alignment, m*sizeof(T))
+    Ptr{T}(ptr)
 end
 
 function BLASVec{T}(ptr::Ptr{T}, m::Int, n::Int, final::Bool) where T
