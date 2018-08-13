@@ -2,27 +2,28 @@ module JuliaBLAS
 
 using SIMD, CpuId
 
-struct Block{T}
-    Ac::Vector{T}
-    Bc::Vector{T}
+struct Block{abType, cType}
+    Ac::abType
+    Bc::abType
+    Cc::cType
     mc::Int
     kc::Int
     nc::Int
     mr::Int
     nr::Int
 end
-function Block(A, B)
+function Block(A, B, C)
     mr, nr = 8, 8
-    mc, kc, nc = 32, 32, 32
+    mc, kc, nc = 64, 64, 64
     Ac = similar(A, kc*mc)
     Bc = similar(B, kc*nc)
     Cc = reshape(valloc(eltype(C), 8, mr*nr), mr, nr)
     fill!(Ac, 0); fill!(Bc, 0)
-    Block(Ac, Bc,
+    Block(Ac, Bc, Cc,
           mc, kc, nc, mr, nr)
 end
 
-function mymul!(C, A, B, blk=Block(A, B))
+function mymul!(C, A, B, blk=Block(A, B, C))
     m,  n = size(A); _n, k = size(B)
     @assert n == _n
     _m, _k = size(C)
@@ -35,26 +36,30 @@ function mymul!(C, A, B, blk=Block(A, B))
         for l in 1:kb # Loop 4
             kc = (l!=kb || _kc==0) ? blk.kc : _kc
             #_β = l==1 ? β : 1.0
-            offsetB = offsetM(B, blk.kc*l, blk.nc*j)
+            offsetB = offsetM(B, blk.kc*(l-1), blk.nc*(j-1))
             pack_B!(blk, B, kc, nc, offsetB)
             for i in 1:mb # Loop 3
                 mc = (i!=mb || _mc==0) ? blk.mc : _mc
-                offsetA = offsetM(A, blk.mc*i, blk.kc*l)
-                offsetC = offsetM(C, blk.mc*i, blk.nc*j)
+                offsetA = offsetM(A, blk.mc*(i-1), blk.kc*(l-1))
+                offsetC = offsetM(C, blk.mc*(i-1), blk.nc*(j-1))
                 pack_A!(blk, A, mc, kc, offsetA)
                 macro_ker!(blk, C, mc, nc, kc, offsetC)
             end # Loop 3
         end # Loop 4
     end # Loop 5
+    C
 end
 
-offsetM(A, i, j) = LinearIndices(A)[i, j]-1
+function offsetM(A, i, j)
+    inc1A, inc2A = stride(A, 1), stride(A, 2)
+    return i*inc1A + j*inc2A
+end
 
 function pack_MRxK!(blk::Block, A, k::Int, offsetA::Int, offsetAc::Int)
     inc1A, inc2A = stride(A, 1), stride(A, 2)
     for j in 1:k
         for i in 1:blk.mr
-            blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A]
+            blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A + 1]
         end
         offsetAc += blk.mr
         offsetA  += inc2A
@@ -62,7 +67,7 @@ function pack_MRxK!(blk::Block, A, k::Int, offsetA::Int, offsetAc::Int)
     return nothing
 end
 
-function pack_A!(blk::Block, B, mc::Int, kc::Int, offsetA::Int)
+function pack_A!(blk::Block, A, mc::Int, kc::Int, offsetA::Int)
     mp, _mr = divrem(mc, blk.mr)
     inc1A, inc2A = stride(A, 1), stride(A, 2)
     offsetAc = 0
@@ -90,7 +95,7 @@ function pack_KxNR!(blk::Block, B, k::Int, offsetB::Int, offsetBc::Int)
     inc1B, inc2B = stride(B, 1), stride(B, 2)
     for i = 1:k
         for j = 1:blk.nr
-            blk.Bc[offsetBc+j] = B[offsetB + (j-1)*incColB + 1]
+            blk.Bc[offsetBc+j] = B[offsetB + (j-1)*inc2B + 1]
         end
         offsetBc += blk.nr
         offsetB  += inc1B
@@ -131,30 +136,52 @@ function macro_ker!(blk, C, mc::Int, nc::Int, kc::Int, offsetC::Int)
             mr = (i!=mp || _mr==0) ? blk.mr : _mr
             offsetA = i*kc*blk.mr
             offsetB = j*kc*blk.nr
-            offsetC = offsetM(C, i*blk.mr, j*blk.mr)
+            offsetC = offsetM(C, (i-1)*blk.mr, (j-1)*blk.mr)
             if mr == blk.mr && nr==blk.nr
-                micro_ker!(C, blk, kc, A, B, offsetA, offsetB, offsetC)
+                micro_ker!(C, blk, kc, offsetA, offsetB, offsetC)
             else
                 micro_ker!(blk.Cc, blk, kc, offsetA, offsetB, 0)
-                _axpy!(C, 1, blk, mr, nr, offsetC)
+                _axpy!(C, 1, blk.Cc, mr, nr, offsetC, 0)
             end
+        end
     end
     return nothing
 end
 
-function micro_ker!(C, blk::Block, kc::Int, A, B, offsetA, offsetB, offsetC)
-    fill!(blk.Cc, zero(eltype(Cc)))
+function micro_ker!(C, blk::Block, kc::Int, offsetA, offsetB, offsetC)
+    fill!(blk.Cc, zero(eltype(blk.Cc)))
     inc1C, inc2C = stride(C, 1), stride(C, 2)
     for k in 1:kc
-        for j in 1:blk.nr, i in 1:blk.mr
-            blk.Cc[i, j] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
+        for j in 1:blk.nr
+            for i in 1:blk.mr
+                blk.Cc[i, j] += blk.Ac[i] * blk.Bc[j]
+            end
         end
         offsetA += blk.mr
         offsetB += blk.nr
     end
     if pointer(blk.Cc) != pointer(C)
         for j in 1:blk.mr, i in 1:blk.nr
-            C[offsetC+(i-1)*inc1C+(j-1)*inc2C] += blk.Cc[i, j]
+            C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] += blk.Cc[i, j]
+        end
+    end
+    return nothing
+end
+
+function _axpy!(Y, α, X, m::Int, n::Int, offsetY::Int, offsetX::Int)
+    inc1Y, inc2Y = stride(Y, 1), stride(Y, 2)
+    inc1X, inc2X = stride(X, 1), stride(X, 2)
+    if α != 1.0
+        for j = 1:n
+            for i = 1:m
+                Y[offsetY+(i-1)*inc1Y+(j-1)*inc2Y+1] = Y[(i-1)*inc1Y+(j-1)*inc2Y+1] + α*X[offsetX+(i-1)*inc1X+(j-1)*inc2X+1]
+            end
+        end
+    else
+        for j = 1:n
+            for i = 1:m
+                Y[offsetY+(i-1)*inc1Y+(j-1)*inc2Y+1] = Y[(i-1)*inc1Y+(j-1)*inc2Y+1] + X[offsetX+(i-1)*inc1X+(j-1)*inc2X+1]
+            end
         end
     end
     return nothing
