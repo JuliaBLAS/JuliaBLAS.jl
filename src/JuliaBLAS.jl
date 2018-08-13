@@ -2,103 +2,164 @@ module JuliaBLAS
 
 using SIMD, CpuId
 
-export mul!
-
-# platform info
-const prefetchshift = 512
-const RegisterWidth = 256
-#const alignment = sizeof(Float64)
-# block size
-#const main_mc       = 64
-#const main_kc       = 64
-# panel size
-#const main_nc       = 512
-# micro block size
-const main_nr       = 6
-const main_mr       = 8
-# CPU
-const c1, c2, c3    = cachesize()
-const line          = cachelinesize()
-
-# Wrap ‘llvm.prefetch‘ Intrinsic
-# https://llvm.org/docs/LangRef.html#llvm-prefetch-intrinsic
-
-# address is the address to be prefetched, rw is the specifier determining if the fetch
-# should be for a read (0) or write (1), and locality is a temporal locality specifier
-# ranging from (0) - no locality, to (3) - extremely local keep in cache. The cache type
-# specifies whether the prefetch is performed on the data (1) or instruction (0) cache.
-# The rw, locality and cache type arguments must be constant integers.
-@inline function _prefetch(address::Ptr{T}, rw::Integer, locality::Integer, cachetype::Integer) where T
-    Base.llvmcall((""" declare void @llvm.prefetch(i8*, i32, i32, i32) """,
-                   """
-                   %ptr = inttoptr i64 %0 to i8*
-                   call void @llvm.prefetch(i8* %ptr, i32 %1, i32 %2, i32 %3)
-                   ret void
-                   """),
-                  Void, Tuple{UInt64, Int32, Int32, Int32},
-                  UInt64(address), Int32(rw), Int32(locality), Int32(cachetype))
+struct Block{T}
+    Ac::Vector{T}
+    Bc::Vector{T}
+    mc::Int
+    kc::Int
+    nc::Int
+    mr::Int
+    nr::Int
+end
+function Block(A, B)
+    mr, nr = 8, 8
+    mc, kc, nc = 32, 32, 32
+    Ac = similar(A, kc*mc)
+    Bc = similar(B, kc*nc)
+    Cc = reshape(valloc(eltype(C), 8, mr*nr), mr, nr)
+    fill!(Ac, 0); fill!(Bc, 0)
+    Block(Ac, Bc,
+          mc, kc, nc, mr, nr)
 end
 
-@inline _prefetch_r(ptr::Ptr{T}) where T = _prefetch(ptr, 0, 3, 1)
-@inline _prefetch_w(ptr::Ptr{T}) where T = _prefetch(ptr, 1, 3, 1)
+function mymul!(C, A, B, blk=Block(A, B))
+    m,  n = size(A); _n, k = size(B)
+    @assert n == _n
+    _m, _k = size(C)
+    @assert m == _m && k == _k
+    mb, _mc = cld(m, blk.mc), m % blk.mc
+    nb, _nc = cld(n, blk.nc), n % blk.nc
+    kb, _kc = cld(k, blk.kc), k % blk.kc
+    for j in 1:nb # Loop 5
+        nc = (j!=nb || _nc==0) ? blk.nc : _nc
+        for l in 1:kb # Loop 4
+            kc = (l!=kb || _kc==0) ? blk.kc : _kc
+            #_β = l==1 ? β : 1.0
+            offsetB = offsetM(B, blk.kc*l, blk.nc*j)
+            pack_B!(blk, B, kc, nc, offsetB)
+            for i in 1:mb # Loop 3
+                mc = (i!=mb || _mc==0) ? blk.mc : _mc
+                offsetA = offsetM(A, blk.mc*i, blk.kc*l)
+                offsetC = offsetM(C, blk.mc*i, blk.nc*j)
+                pack_A!(blk, A, mc, kc, offsetA)
+                macro_ker!(blk, C, mc, nc, kc, offsetC)
+            end # Loop 3
+        end # Loop 4
+    end # Loop 5
+end
 
-@inline function prefetch_r(::Type{Val{M}}, ::Type{Val{N}}, ::Type{Val{Rem}}, ::Type{Val{Shift}}, ptr::Ptr{T}, ld) where {M,N,Rem,Shift,T}
-    for n in 0:N-1
-        for m in 0:(M÷64 + (M % 64 >= Rem) - 1)
-            _prefetch_r(ptr + M * 64 + Shift + ld * N)
+offsetM(A, i, j) = LinearIndices(A)[i, j]-1
+
+function pack_MRxK!(blk::Block, A, k::Int, offsetA::Int, offsetAc::Int)
+    inc1A, inc2A = stride(A, 1), stride(A, 2)
+    for j in 1:k
+        for i in 1:blk.mr
+            blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A]
+        end
+        offsetAc += blk.mr
+        offsetA  += inc2A
+    end
+    return nothing
+end
+
+function pack_A!(blk::Block, B, mc::Int, kc::Int, offsetA::Int)
+    mp, _mr = divrem(mc, blk.mr)
+    inc1A, inc2A = stride(A, 1), stride(A, 2)
+    offsetAc = 0
+    for i in 1:mp
+        pack_MRxK!(blk, A, kc, offsetA, offsetAc)
+        offsetAc += kc*blk.mr
+        offsetA  += blk.mr*inc1A
+    end
+    if _mr > 0
+        for j in 1:kc
+            for i in 1:_mr
+                blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A + 1]
+            end
+            for i in _mr:blk.mr
+                blk.Ac[offsetAc+i] = zero(eltype(A))
+            end
+        end
+        offsetAc += blk.mr
+        offsetA  += inc2A
+    end
+    return nothing
+end
+
+function pack_KxNR!(blk::Block, B, k::Int, offsetB::Int, offsetBc::Int)
+    inc1B, inc2B = stride(B, 1), stride(B, 2)
+    for i = 1:k
+        for j = 1:blk.nr
+            blk.Bc[offsetBc+j] = B[offsetB + (j-1)*incColB + 1]
+        end
+        offsetBc += blk.nr
+        offsetB  += inc1B
+    end
+    return nothing
+end
+
+function pack_B!(blk::Block, B, kc::Int, nc::Int, offsetB::Int)
+    np, _nr = divrem(nc, blk.nr)
+    inc1B, inc2B = stride(B, 1), stride(B, 2)
+    offsetBc = 0
+    for j in 1:np
+        pack_KxNR!(blk, B, kc, offsetB, offsetBc)
+        offsetBc += kc*blk.nr
+        offsetB  += blk.nr*inc2B
+    end
+    if _nr > 0
+        for i in 1:kc
+            for j in 1:_nr
+                blk.Bc[offsetBc+j] = B[offsetB + j*inc2B]
+            end
+            for j in _nr:blk.nr
+                blk.Bc[offsetBc+j] = zero(eltype(B))
+            end
+        end
+        offsetBc += blk.nr
+        offsetB  += inc1B
+    end
+    return nothing
+end
+
+function macro_ker!(blk, C, mc::Int, nc::Int, kc::Int, offsetC::Int)
+    mp, _mr = cld(mc, blk.mr), mc % blk.mr
+    np, _nr = cld(nc, blk.nr), nc % blk.nr
+    for j in 1:np
+        nr = (j!=np || _nr==0) ? blk.nr : _nr
+        for i in 1:mp
+            mr = (i!=mp || _mr==0) ? blk.mr : _mr
+            offsetA = i*kc*blk.mr
+            offsetB = j*kc*blk.nr
+            offsetC = offsetM(C, i*blk.mr, j*blk.mr)
+            if mr == blk.mr && nr==blk.nr
+                micro_ker!(C, blk, kc, A, B, offsetA, offsetB, offsetC)
+            else
+                micro_ker!(blk.Cc, blk, kc, offsetA, offsetB, 0)
+                _axpy!(C, 1, blk, mr, nr, offsetC)
+            end
+    end
+    return nothing
+end
+
+function micro_ker!(C, blk::Block, kc::Int, A, B, offsetA, offsetB, offsetC)
+    fill!(blk.Cc, zero(eltype(Cc)))
+    inc1C, inc2C = stride(C, 1), stride(C, 2)
+    for k in 1:kc
+        for j in 1:blk.nr, i in 1:blk.mr
+            blk.Cc[i, j] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
+        end
+        offsetA += blk.mr
+        offsetB += blk.nr
+    end
+    if pointer(blk.Cc) != pointer(C)
+        for j in 1:blk.mr, i in 1:blk.nr
+            C[offsetC+(i-1)*inc1C+(j-1)*inc2C] += blk.Cc[i, j]
         end
     end
+    return nothing
 end
 
-check_alignment(x::Integer) = (x & -x) > (x - 1) && x >= sizeof(Ptr{Void})
+export mymul!
 
-#posix_memalign(pptr::Ref{Ptr{Void}}, alignment::Integer, size::Integer) = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
-function memalign(alignment::Integer, size::Integer)
-    @static if !is_windows()
-        pptr = Ref{Ptr{Void}}(C_NULL)
-        ret_code = ccall(:posix_memalign, Cint, (Ptr{Ptr{Void}}, Csize_t, Csize_t), pptr, alignment, size)
-        ptr = pptr[]
-        Base.Libc.errno(ret_code)
-    else
-        ptr = ccall(:_aligned_malloc, Ptr{Void}, (Csize_t, Csize_t), size, alignment)
-    end
-    @assert !(ptr === C_NULL) "Allocation failed with $(Base.Libc.strerror())"
-    return ptr
-end
-
-mutable struct BLASVec{T} <: DenseVector{T}
-    #vec::Vector{T}
-    ptr::Ptr{T}
-    len::Int
-    incC::Int
-    incR::Int
-end
-
-function allocate(::Type{T}, m) where T
-    #mem = Ref{Ptr{Void}}()
-    alignment = sizeof(Float64)*4
-    @assert check_alignment(alignment)
-    ptr = memalign(alignment, m*sizeof(T))
-    Ptr{T}(ptr)
-end
-
-function BLASVec{T}(ptr::Ptr{T}, m::Int, n::Int, final::Bool) where T
-    #x = BLASVec(unsafe_wrap(Vector{T}, ptr, m*n, false), m, 1)
-    x = BLASVec(ptr, m*n, m, 1)
-    #final && finalizer(x->Base.Libc.free(pointer(x.vec)), x)
-    final && @static VERSION > v"0.7.0-DEV.3000" ? finalizer(x->Base.Libc.free(x.ptr), x) : finalizer(x, x->Base.Libc.free(x.ptr))
-    x
-end
-
-import Base: getindex, size, isassigned#, show
-getindex(v::BLASVec{T}, i::Int) where T = unsafe_load(v.ptr, i)
-getindex(v::BLASVec{T}, i::Int, j::Int) where T = unsafe_load(v.ptr, i*v.incC+j*v.incR)
-size(v::BLASVec{T}) where T = (v.len,)
-isassigned(v::BLASVec{T}, i::Int) where T = v.len >= i > 0
-isassigned(v::BLASVec{T}, i::Int, j::Int) where T = isassigned(v, i*v.incC+j*v.incR)
-#show(io::IO, m::MIME"text/plain", v::BLASVec{T}) where T = show(io, m, v.vec)
-
-include("blocking.jl")
-include("kernel.jl")
-
-end
+end # module
