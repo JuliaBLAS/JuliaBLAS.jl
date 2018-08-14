@@ -14,8 +14,8 @@ struct Block{abType, ABType, cType}
     nr::Int
 end
 function Block(A, B, C)
-    mr, nr = 4, 4
-    mc, kc, nc = 8, 8, 8
+    mr, nr = 8, 8
+    mc, kc, nc = 32, 32, 32
     Ac = similar(A, kc*mc)
     Bc = similar(B, kc*nc)
     AB = valloc(eltype(C), 8, mr*nr)
@@ -139,12 +139,11 @@ function macro_ker!(blk, C, mc::Int, nc::Int, kc::Int, offsetC::Int)
             mr = (i!=mp || _mr==0) ? blk.mr : _mr
             offsetA = (i-1)*kc*blk.mr
             offsetB = (j-1)*kc*blk.nr
-            offsetC += (i-1)*blk.mr*inc1C + (j-1)*blk.nr*inc2C
             if mr == blk.mr && nr==blk.nr
-                micro_ker!(C, blk, kc, offsetA, offsetB, offsetC, inc1C, inc2C, true)
+                micro_ker!(C, blk, kc, offsetA, offsetB, offsetC+(i-1)*blk.mr*inc1C + (j-1)*blk.nr*inc2C, inc1C, inc2C, true)
             else
                 micro_ker!(blk.Cc, blk, kc, offsetA, offsetB, 0, 1, blk.mr, false)
-                _axpy!(C, 1, blk.AB, mr, nr, offsetC, 0, 1, blk.mr)
+                _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*blk.mr*inc1C + (j-1)*blk.nr*inc2C, 0, 1, blk.mr)
             end
         end
     end
