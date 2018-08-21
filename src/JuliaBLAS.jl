@@ -8,11 +8,11 @@ struct Block{T,MC,KC,NC,MR,NR}
     AB::T
     Cc::T
 end
-function Block(A::X, B::W, C::Z; mr=8, nr=4, mc=nothing, kc=nothing, nc=nothing) where {X, W, Z}
+function Block(A::X, B::W, C::Z; mr=8, nr=6, mc=nothing, kc=nothing, nc=nothing) where {X, W, Z}
     m, n = size(C)
-    mc == nothing && (mc = min(504, mr*cld(m,mr)))
-    nc == nothing && (nc = min(504, nr*cld(n,nr)))
-    kc == nothing && (kc = min(504, size(A,2)))
+    mc == nothing && (mc = min(512, mr*cld(m,mr)))
+    nc == nothing && (nc = min(516, nr*cld(n,nr)))
+    kc == nothing && (kc = min(1024, size(A,2)))
     T = promote_type(eltype(X), eltype(W), eltype(Z))
     Ac = Vector{T}(undef, max(kc*mc, 1024))
     Bc = Vector{T}(undef, max(kc*nc, 1024))
@@ -157,10 +157,13 @@ end
                             ::Val{loadC}) where {T,MC,KC,NC,MR,NR,loadC}
     #fill!(blk.AB, zero(eltype(blk.AB)))
     VT = Vec{4,Float64}
+    kc = loadC ? KC : kc
     ab11, ab12 = zero(VT), zero(VT)
     ab21, ab22 = zero(VT), zero(VT)
     ab31, ab32 = zero(VT), zero(VT)
     ab41, ab42 = zero(VT), zero(VT)
+    ab51, ab52 = zero(VT), zero(VT)
+    ab61, ab62 = zero(VT), zero(VT)
     for k in 1:kc
         #for j in 1:NR
         #    @inbounds for i in 1:MR
@@ -169,12 +172,15 @@ end
         #end
         b1, b2 = VT(blk.Bc[offsetB+1]), VT(blk.Bc[offsetB+2])
         b3, b4 = VT(blk.Bc[offsetB+3]), VT(blk.Bc[offsetB+4])
+        b5, b6 = VT(blk.Bc[offsetB+5]), VT(blk.Bc[offsetB+6])
         a1 = vloada(VT, blk.Ac, offsetA+1)
         a2 = vloada(VT, blk.Ac, offsetA+5)
         ab11 = muladd(a1, b1, ab11); ab12 = muladd(a2, b1, ab12)
         ab21 = muladd(a1, b2, ab21); ab22 = muladd(a2, b2, ab22)
         ab31 = muladd(a1, b3, ab31); ab32 = muladd(a2, b3, ab32)
         ab41 = muladd(a1, b4, ab41); ab42 = muladd(a2, b4, ab42)
+        ab51 = muladd(a1, b5, ab51); ab52 = muladd(a2, b5, ab52)
+        ab61 = muladd(a1, b6, ab61); ab62 = muladd(a2, b6, ab62)
         offsetA += MR
         offsetB += NR
     end
@@ -182,6 +188,10 @@ end
     vstorea(ab21, blk.AB, 1MR+1); vstorea(ab22, blk.AB, 1MR+5)
     vstorea(ab31, blk.AB, 2MR+1); vstorea(ab32, blk.AB, 2MR+5)
     vstorea(ab41, blk.AB, 3MR+1); vstorea(ab42, blk.AB, 3MR+5)
+    vstorea(ab51, blk.AB, 4MR+1); vstorea(ab52, blk.AB, 4MR+5)
+    vstorea(ab61, blk.AB, 5MR+1); vstorea(ab62, blk.AB, 5MR+5)
+    #vstorea(ab71, blk.AB, 6MR+1); vstorea(ab72, blk.AB, 6MR+5)
+    #vstorea(ab81, blk.AB, 7MR+1); vstorea(ab82, blk.AB, 7MR+5)
     #for j in 1:NR
     #    for i in 1:MR
     #        C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] = zero(eltype(C))
