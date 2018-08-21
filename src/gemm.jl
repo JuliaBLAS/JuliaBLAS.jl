@@ -1,26 +1,28 @@
 using SIMD, CpuId
 import Base.Cartesian: @nexprs
+using StaticArrays: MMatrix
 
-struct Block{T,MC,KC,NC,MR,NR}
-    Ac::T
-    Bc::T
-    AB::T
-    Cc::T
+struct Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}
+    Ac::T1
+    Bc::T2
+    AB::T3
+    C::T4
 end
-function Block(A::X, B::W, C::Z; mr=8, nr=6, mc=nothing, kc=nothing, nc=nothing) where {X, W, Z}
+function Block(A::X, B::W, C::Z) where {X, W, Z}
+    mr=8; nr=6
     m, n = size(C)
-    mc == nothing && (mc = min(512, mr*cld(m,mr)))
-    nc == nothing && (nc = min(516, nr*cld(n,nr)))
-    kc == nothing && (kc = min(1024, size(A,2)))
+    mc = min(512, mr*cld(m,mr))
+    nc = min(516, nr*cld(n,nr))
+    kc = min(1024, size(A,2))
     T = promote_type(eltype(X), eltype(W), eltype(Z))
-    Ac = Vector{T}(undef, max(kc*mc, 1024))
-    Bc = Vector{T}(undef, max(kc*nc, 1024))
-    AB = Vector{T}(undef, 1024) # long array to ensure alignment
-    Cc = Vector{T}(undef, 1024) # long array to ensure alignment
-    Block{Vector{T}, mc, kc, nc, mr, nr}(Ac, Bc, AB, Cc)
+    Ac = Matrix{T}(undef, mr, mc*kc÷mr)
+    Bc = Matrix{T}(undef, nr, kc*nc÷nr)
+    AB = zero(MMatrix{mr, nr , T})
+    Block{typeof(Ac), typeof(Bc), typeof(AB), typeof(C),
+          mc, kc, nc, mr, nr}(Ac, Bc, AB, C)
 end
 
-function mymul!(C, A, B, blk::Block{T,MC,KC,NC,MR,NR}=Block(A, B, C)) where {T,MC,KC,NC,MR,NR}
+function mymul!(C, A, B, blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}=Block(A, B, C)) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     m,  k = size(A); _k, n = size(B)
     @assert k == _k
     _m, _n = size(C)
@@ -52,8 +54,8 @@ end
     return i*inc1A + j*inc2A
 end
 
-@inline function pack_MRxK!(blk::Block{T,MC,KC,NC,MR,NR}, A,
-                            k::Int, offsetA::Int, offsetAc::Int) where {T,MC,KC,NC,MR,NR}
+@inline function pack_MRxK!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, A,
+                            k::Int, offsetA::Int, offsetAc::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     inc1A, inc2A = stride(A, 1), stride(A, 2)
     for j in 1:k
         for i in 1:MR
@@ -65,8 +67,8 @@ end
     return nothing
 end
 
-function pack_A!(blk::Block{T,MC,KC,NC,MR,NR}, A,
-                 mc::Int, kc::Int, offsetA::Int) where {T,MC,KC,NC,MR,NR}
+function pack_A!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, A,
+                 mc::Int, kc::Int, offsetA::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     mp, _mr = divrem(mc, MR)
     inc1A, inc2A = stride(A, 1), stride(A, 2)
     offsetAc = 0
@@ -90,8 +92,8 @@ function pack_A!(blk::Block{T,MC,KC,NC,MR,NR}, A,
     return nothing
 end
 
-@inline function pack_KxNR!(blk::Block{T,MC,KC,NC,MR,NR}, B,
-                            k::Int, offsetB::Int, offsetBc::Int) where {T,MC,KC,NC,MR,NR}
+@inline function pack_KxNR!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, B,
+                            k::Int, offsetB::Int, offsetBc::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     inc1B, inc2B = stride(B, 1), stride(B, 2)
     for i = 1:k
         for j = 1:NR
@@ -103,8 +105,8 @@ end
     return nothing
 end
 
-function pack_B!(blk::Block{T,MC,KC,NC,MR,NR}, B,
-                 kc::Int, nc::Int, offsetB::Int) where {T,MC,KC,NC,MR,NR}
+function pack_B!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, B,
+                 kc::Int, nc::Int, offsetB::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     np, _nr = divrem(nc, NR)
     inc1B, inc2B = stride(B, 1), stride(B, 2)
     offsetBc = 0
@@ -128,8 +130,8 @@ function pack_B!(blk::Block{T,MC,KC,NC,MR,NR}, B,
     return nothing
 end
 
-function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C,
-                    mc::Int, nc::Int, kc::Int, offsetC::Int) where {T,MC,KC,NC,MR,NR}
+@inline function macro_ker!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, C,
+                    mc::Int, nc::Int, kc::Int, offsetC::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     mp, _mr = cld(mc, MR), mc % MR
     np, _nr = cld(nc, NR), nc % NR
     inc1C, inc2C = stride(C, 1), stride(C, 2)
@@ -140,9 +142,9 @@ function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C,
             offsetA = (i-1)*kc*MR
             offsetB = (j-1)*kc*NR
             if mr == MR && nr==NR
-                micro_ker!(C, blk, kc, offsetA, offsetB, offsetC+(i-1)*MR*inc1C + (j-1)*NR*inc2C, inc1C, inc2C, Val(true))
+                micro_ker!(blk, kc, offsetA, offsetB, offsetC+(i-1)*MR*inc1C + (j-1)*NR*inc2C, inc1C, inc2C, Val(true))
             else
-                micro_ker!(blk.Cc, blk, kc, offsetA, offsetB, 0, 1, MR, Val(false))
+                micro_ker!(blk, kc, offsetA, offsetB, 0, 1, MR, Val(false))
                 _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*MR*inc1C + (j-1)*NR*inc2C, 0, 1, MR)
             end
         end
@@ -150,11 +152,43 @@ function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C,
     return nothing
 end
 
-function _axpy!(Y, α, X, m::Int, n::Int,
+@inline @generated function micro_ker!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR},
+                            kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
+                            inc1C::Int, inc2C::Int,
+                            ::Val{loadC}) where {T1,T2,T3,T4,MC,KC,NC,MR,NR,loadC}
+    quote
+        @inbounds begin
+            pA, pAB = pointer(blk.Ac), pointer(blk.AB)
+            T = eltype($T1); siz = sizeof(T)
+            VT = Vec{$MR, T}
+            if $loadC
+                pC = pointer(blk.C)
+                @nexprs $NR i -> ab_i = vload(VT, pC + (offsetC+(i-1)*inc2C)siz)
+            else
+                @nexprs $NR i -> ab_i = zero(VT)
+            end
+            for k in 1:kc
+                a1 = vload(VT, pA + (offsetA+(k-1)MR)siz)
+                @nexprs $NR i -> begin
+                    b_i = VT(blk.Bc[offsetB+(k-1)NR+i])
+                    ab_i = muladd(a1, b_i, ab_i)
+                end
+            end
+            if $loadC
+                @nexprs $NR i -> vstore(ab_i, pC + (offsetC+(i-1)*inc2C)siz)
+            else
+                @nexprs $NR i -> vstore(ab_i, pAB + (i-1)MR*siz)
+            end
+            return nothing
+        end
+    end
+end
+
+@inline function _axpy!(Y, α, X, m::Int, n::Int,
                 offsetY::Int, offsetX::Int, inc1X::Int, inc2X::Int)
     inc1Y, inc2Y = stride(Y, 1), stride(Y, 2)
     for j in 1:n
-        for i in 1:m
+        @inbounds for i in 1:m
             Y[offsetY+(i-1)*inc1Y+(j-1)*inc2Y+1] += α*X[offsetX+(i-1)*inc1X+(j-1)*inc2X+1]
         end
     end
