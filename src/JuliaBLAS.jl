@@ -8,10 +8,14 @@ struct Block{T,MC,KC,NC,MR,NR}
     AB::T
     Cc::T
 end
-function Block(A::X, B::W, C::Z; mr=8, nr=4, mc=384, kc=384, nc=4092) where {X, W, Z}# TODO: smarter block size
+function Block(A::X, B::W, C::Z; mr=8, nr=4, mc=nothing, kc=nothing, nc=nothing) where {X, W, Z}
+    m, n = size(C)
+    mc == nothing && (mc = min(504, mr*cld(m,mr)))
+    nc == nothing && (nc = min(504, nr*cld(n,nr)))
+    kc == nothing && (kc = min(504, size(A,2)))
     T = promote_type(eltype(X), eltype(W), eltype(Z))
-    Ac = Vector{T}(undef, kc*mc)
-    Bc = Vector{T}(undef, kc*nc)
+    Ac = Vector{T}(undef, max(kc*mc, 1024))
+    Bc = Vector{T}(undef, max(kc*nc, 1024))
     AB = Vector{T}(undef, 1024) # long array to ensure alignment
     Cc = Vector{T}(undef, 1024) # long array to ensure alignment
     Block{Vector{T}, mc, kc, nc, mr, nr}(Ac, Bc, AB, Cc)
