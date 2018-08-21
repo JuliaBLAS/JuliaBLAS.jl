@@ -152,29 +152,32 @@ end
                             inc1C::Int, inc2C::Int,
                             ::Val{loadC}) where {T,MC,KC,NC,MR,NR,loadC}
     #fill!(blk.AB, zero(eltype(blk.AB)))
-    VT = Vec{8,Float64}
-    ab1, ab2 = zero(VT), zero(VT)
-    ab3, ab4 = zero(VT), zero(VT)
+    VT = Vec{4,Float64}
+    ab11, ab12 = zero(VT), zero(VT)
+    ab21, ab22 = zero(VT), zero(VT)
+    ab31, ab32 = zero(VT), zero(VT)
+    ab41, ab42 = zero(VT), zero(VT)
     for k in 1:kc
         #for j in 1:NR
         #    @inbounds for i in 1:MR
         #        blk.AB[i + (j-1)*MR] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
         #    end
         #end
-        va = vloada(VT, blk.Ac, offsetA+1)
         b1, b2 = VT(blk.Bc[offsetB+1]), VT(blk.Bc[offsetB+2])
         b3, b4 = VT(blk.Bc[offsetB+3]), VT(blk.Bc[offsetB+4])
-        ab1 = muladd(va, b1, ab1)
-        ab2 = muladd(va, b2, ab2)
-        ab3 = muladd(va, b3, ab3)
-        ab4 = muladd(va, b4, ab4)
+        a1 = vloada(VT, blk.Ac, offsetA+1)
+        a2 = vloada(VT, blk.Ac, offsetA+5)
+        ab11 = muladd(a1, b1, ab11); ab12 = muladd(a2, b1, ab12)
+        ab21 = muladd(a1, b2, ab21); ab22 = muladd(a2, b2, ab22)
+        ab31 = muladd(a1, b3, ab31); ab32 = muladd(a2, b3, ab32)
+        ab41 = muladd(a1, b4, ab41); ab42 = muladd(a2, b4, ab42)
         offsetA += MR
         offsetB += NR
     end
-    vstorea(ab1, blk.AB, 0MR+1)
-    vstorea(ab2, blk.AB, 1MR+1)
-    vstorea(ab3, blk.AB, 2MR+1)
-    vstorea(ab4, blk.AB, 3MR+1)
+    vstorea(ab11, blk.AB, 0MR+1); vstorea(ab12, blk.AB, 0MR+5)
+    vstorea(ab21, blk.AB, 1MR+1); vstorea(ab22, blk.AB, 1MR+5)
+    vstorea(ab31, blk.AB, 2MR+1); vstorea(ab32, blk.AB, 2MR+5)
+    vstorea(ab41, blk.AB, 3MR+1); vstorea(ab42, blk.AB, 3MR+5)
     #for j in 1:NR
     #    for i in 1:MR
     #        C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] = zero(eltype(C))
