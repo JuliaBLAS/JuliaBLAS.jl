@@ -7,18 +7,13 @@ struct Block{T,MC,KC,NC,MR,NR}
     Bc::T
     AB::T
     Cc::T
-    #mc::Int
-    #kc::Int
-    #nc::Int
-    #mr::Int
-    #nr::Int
 end
-function Block(A::X, B::W, C::Z; mr=8, nr=4, mc=32, kc=32, nc=32) where {X, W, Z}# TODO: smarter block size
+function Block(A::X, B::W, C::Z; mr=8, nr=4, mc=384, kc=384, nc=4092) where {X, W, Z}# TODO: smarter block size
     T = promote_type(eltype(X), eltype(W), eltype(Z))
     Ac = Vector{T}(undef, kc*mc)
     Bc = Vector{T}(undef, kc*nc)
-    AB = valloc(T, 8, mr*nr)
-    Cc = valloc(T, 8, mr*nr)
+    AB = Vector{T}(undef, 1024) # long array to ensure alignment
+    Cc = Vector{T}(undef, 1024) # long array to ensure alignment
     Block{Vector{T}, mc, kc, nc, mr, nr}(Ac, Bc, AB, Cc)
 end
 
@@ -54,7 +49,8 @@ end
     return i*inc1A + j*inc2A
 end
 
-@inline function pack_MRxK!(blk::Block{T,MC,KC,NC,MR,NR}, A, k::Int, offsetA::Int, offsetAc::Int) where {T,MC,KC,NC,MR,NR}
+@inline function pack_MRxK!(blk::Block{T,MC,KC,NC,MR,NR}, A,
+                            k::Int, offsetA::Int, offsetAc::Int) where {T,MC,KC,NC,MR,NR}
     inc1A, inc2A = stride(A, 1), stride(A, 2)
     for j in 1:k
         for i in 1:MR
@@ -66,7 +62,8 @@ end
     return nothing
 end
 
-function pack_A!(blk::Block{T,MC,KC,NC,MR,NR}, A, mc::Int, kc::Int, offsetA::Int) where {T,MC,KC,NC,MR,NR}
+function pack_A!(blk::Block{T,MC,KC,NC,MR,NR}, A,
+                 mc::Int, kc::Int, offsetA::Int) where {T,MC,KC,NC,MR,NR}
     mp, _mr = divrem(mc, MR)
     inc1A, inc2A = stride(A, 1), stride(A, 2)
     offsetAc = 0
@@ -90,7 +87,8 @@ function pack_A!(blk::Block{T,MC,KC,NC,MR,NR}, A, mc::Int, kc::Int, offsetA::Int
     return nothing
 end
 
-@inline function pack_KxNR!(blk::Block{T,MC,KC,NC,MR,NR}, B, k::Int, offsetB::Int, offsetBc::Int) where {T,MC,KC,NC,MR,NR}
+@inline function pack_KxNR!(blk::Block{T,MC,KC,NC,MR,NR}, B,
+                            k::Int, offsetB::Int, offsetBc::Int) where {T,MC,KC,NC,MR,NR}
     inc1B, inc2B = stride(B, 1), stride(B, 2)
     for i = 1:k
         for j = 1:NR
@@ -102,7 +100,8 @@ end
     return nothing
 end
 
-function pack_B!(blk::Block{T,MC,KC,NC,MR,NR}, B, kc::Int, nc::Int, offsetB::Int) where {T,MC,KC,NC,MR,NR}
+function pack_B!(blk::Block{T,MC,KC,NC,MR,NR}, B,
+                 kc::Int, nc::Int, offsetB::Int) where {T,MC,KC,NC,MR,NR}
     np, _nr = divrem(nc, NR)
     inc1B, inc2B = stride(B, 1), stride(B, 2)
     offsetBc = 0
@@ -126,7 +125,8 @@ function pack_B!(blk::Block{T,MC,KC,NC,MR,NR}, B, kc::Int, nc::Int, offsetB::Int
     return nothing
 end
 
-function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C, mc::Int, nc::Int, kc::Int, offsetC::Int) where {T,MC,KC,NC,MR,NR}
+function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C,
+                    mc::Int, nc::Int, kc::Int, offsetC::Int) where {T,MC,KC,NC,MR,NR}
     mp, _mr = cld(mc, MR), mc % MR
     np, _nr = cld(nc, NR), nc % NR
     inc1C, inc2C = stride(C, 1), stride(C, 2)
@@ -137,9 +137,9 @@ function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C, mc::Int, nc::Int, kc::Int, 
             offsetA = (i-1)*kc*MR
             offsetB = (j-1)*kc*NR
             if mr == MR && nr==NR
-                micro_ker!(C, blk, kc, offsetA, offsetB, offsetC+(i-1)*MR*inc1C + (j-1)*NR*inc2C, inc1C, inc2C, true)
+                micro_ker!(C, blk, kc, offsetA, offsetB, offsetC+(i-1)*MR*inc1C + (j-1)*NR*inc2C, inc1C, inc2C, Val(true))
             else
-                micro_ker!(blk.Cc, blk, kc, offsetA, offsetB, 0, 1, MR, false)
+                micro_ker!(blk.Cc, blk, kc, offsetA, offsetB, 0, 1, MR, Val(false))
                 _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*MR*inc1C + (j-1)*NR*inc2C, 0, 1, MR)
             end
         end
@@ -147,17 +147,34 @@ function macro_ker!(blk::Block{T,MC,KC,NC,MR,NR}, C, mc::Int, nc::Int, kc::Int, 
     return nothing
 end
 
-@inline function micro_ker!(C, blk::Block{T,MC,KC,NC,MR,NR}, kc::Int, offsetA, offsetB, offsetC, inc1C, inc2C, loadC) where {T,MC,KC,NC,MR,NR}
-    fill!(blk.AB, zero(eltype(blk.AB)))
+@inline function micro_ker!(C, blk::Block{T,MC,KC,NC,MR,NR},
+                            kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
+                            inc1C::Int, inc2C::Int,
+                            ::Val{loadC}) where {T,MC,KC,NC,MR,NR,loadC}
+    #fill!(blk.AB, zero(eltype(blk.AB)))
+    VT = Vec{8,Float64}
+    ab1, ab2 = zero(VT), zero(VT)
+    ab3, ab4 = zero(VT), zero(VT)
     for k in 1:kc
-        for j in 1:NR
-            for i in 1:MR
-                blk.AB[i + (j-1)*MR] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
-            end
-        end
+        #for j in 1:NR
+        #    @inbounds for i in 1:MR
+        #        blk.AB[i + (j-1)*MR] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
+        #    end
+        #end
+        va = vloada(VT, blk.Ac, offsetA+1)
+        b1, b2 = VT(blk.Bc[offsetB+1]), VT(blk.Bc[offsetB+2])
+        b3, b4 = VT(blk.Bc[offsetB+3]), VT(blk.Bc[offsetB+4])
+        ab1 = muladd(va, b1, ab1)
+        ab2 = muladd(va, b2, ab2)
+        ab3 = muladd(va, b3, ab3)
+        ab4 = muladd(va, b4, ab4)
         offsetA += MR
         offsetB += NR
     end
+    vstorea(ab1, blk.AB, 0MR+1)
+    vstorea(ab2, blk.AB, 1MR+1)
+    vstorea(ab3, blk.AB, 2MR+1)
+    vstorea(ab4, blk.AB, 3MR+1)
     #for j in 1:NR
     #    for i in 1:MR
     #        C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] = zero(eltype(C))
@@ -173,7 +190,8 @@ end
     return nothing
 end
 
-function _axpy!(Y, α, X, m::Int, n::Int, offsetY::Int, offsetX::Int, inc1X, inc2X)
+function _axpy!(Y, α, X, m::Int, n::Int,
+                offsetY::Int, offsetX::Int, inc1X::Int, inc2X::Int)
     inc1Y, inc2Y = stride(Y, 1), stride(Y, 2)
     for j in 1:n
         for i in 1:m
@@ -183,6 +201,6 @@ function _axpy!(Y, α, X, m::Int, n::Int, offsetY::Int, offsetX::Int, inc1X, inc
     return nothing
 end
 
-export mymul!
+export mymul!, Block
 
 end # module
