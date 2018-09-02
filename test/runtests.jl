@@ -7,7 +7,10 @@ using JuliaBLAS, Test, LinearAlgebra
         A = rand(m, k)
         B = rand(k, n)
         ABC = A*B + C
-        mymul!(C, A, B)
+        mymul!(C, A, B, Block(A,B,C,false))
+        @test C ≈ ABC
+        ABC = A*B + C
+        mymul!(C, A, B, Block(A,B,C,true))
         @test C ≈ ABC
     end
 end

@@ -3,7 +3,7 @@ using SIMD
 import Base.Cartesian: @nexprs
 using StaticArrays: MMatrix
 
-@inline micro_ker!(args...) = _generic_micro_ker!(args...)
+@inline micro_ker!(blk, args...) = blk.generic ? _generic_micro_ker!(blk,args...) : _simd_micro_ker!(blk,args...)
 
 struct Block{T1,T2,T3,T4}
     Ac::T1
@@ -21,8 +21,9 @@ struct Block{T1,T2,T3,T4}
     inc2B::Int
     inc1C::Int
     inc2C::Int
+    generic::Bool
 end
-function Block(A::X, B::W, C::Z) where {X, W, Z}
+function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
     mr=8; nr=6
     m, n = size(C)
     mc = min(512, mr*cld(m,mr))
@@ -33,10 +34,11 @@ function Block(A::X, B::W, C::Z) where {X, W, Z}
     Bc = Matrix{T}(undef, nr, kc*nc÷nr)
     AB = zero(MMatrix{mr, nr , T})
     Block{typeof(Ac),typeof(Bc),typeof(AB),typeof(C)}(Ac, Bc, AB, C, mc, kc, nc, mr, nr,
-                                                      strides(A)..., strides(B)..., strides(C)...)
+                                                      strides(A)..., strides(B)..., strides(C)...,
+                                                      generic)
 end
 
-function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C)) where {T1,T2,T3,T4}
+function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C, false)) where {T1,T2,T3,T4}
     m,  k = size(A); _k, n = size(B)
     @assert k == _k
     _m, _n = size(C)
@@ -176,35 +178,43 @@ end
     return nothing
 end
 
-@generated function _f64_8x6_micro_ker!(blk::Block{T1,T2,T3,T4},
-                                        kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
-                                        ::Val{loadC}) where {T1,T2,T3,T4,loadC}
+function kernel_quote(T1, MR, NR, loadC)
     quote
-        $(Expr(:meta, :inline))
         @inbounds begin
             pA, pAB = pointer(blk.Ac), pointer(blk.AB)
             T = eltype($T1); siz = sizeof(T)
-            VT = Vec{$blk.mr, T}
+            VT = Vec{$MR, T}
             if $loadC
                 pC = pointer(blk.C)
-                @nexprs $blk.nr i -> ab_i = vload(VT, pC + (offsetC+(i-1)*blk.inc2C)siz)
+                @nexprs $NR i -> ab_i = vload(VT, pC + (offsetC+(i-1)*blk.inc2C)siz)
             else
-                @nexprs $blk.nr i -> ab_i = zero(VT)
+                @nexprs $NR i -> ab_i = zero(VT)
             end
             for k in 1:kc
                 a1 = vload(VT, pA + (offsetA+(k-1)blk.mr)siz)
-                @nexprs $blk.nr i -> begin
+                @nexprs $NR i -> begin
                     b_i = VT(blk.Bc[offsetB+(k-1)blk.nr+i])
                     ab_i = muladd(a1, b_i, ab_i)
                 end
             end
             if $loadC
-                @nexprs $blk.nr i -> vstore(ab_i, pC + (offsetC+(i-1)*blk.inc2C)siz)
+                @nexprs $NR i -> vstore(ab_i, pC + (offsetC+(i-1)*blk.inc2C)siz)
             else
-                @nexprs $blk.nr i -> vstore(ab_i, pAB + (i-1)blk.mr*siz)
+                @nexprs $NR i -> vstore(ab_i, pAB + (i-1)blk.mr*siz)
             end
             return nothing
         end
+    end
+end
+
+@generated function _simd_micro_ker!(blk::Block{T1,T2,T3,T4}, kc::Int,
+                                     offsetA::Int, offsetB::Int, offsetC::Int,
+                                     ::Val{loadC}) where {T1,T2,T3,T4,loadC}
+    expr = kernel_quote(T1, 8, 6, loadC)
+    quote
+        $(Expr(:meta, :inline))
+        @assert blk.mr == 8 && blk.nr == 6
+        $expr
     end
 end
 
