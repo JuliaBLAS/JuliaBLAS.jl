@@ -2,6 +2,8 @@ using SIMD, CpuId
 import Base.Cartesian: @nexprs
 using StaticArrays: MMatrix
 
+micro_ker!(args...) = _generic_micro_ker!(args...)
+
 struct Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}
     Ac::T1
     Bc::T2
@@ -152,11 +154,32 @@ end
     return nothing
 end
 
-@inline @generated function micro_ker!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR},
-                            kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
-                            inc1C::Int, inc2C::Int,
-                            ::Val{loadC}) where {T1,T2,T3,T4,MC,KC,NC,MR,NR,loadC}
+@inline function _generic_micro_ker!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR},
+                 kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
+                 inc1C::Int, inc2C::Int,
+                 ::Val{loadC}) where {T1,T2,T3,T4,MC,KC,NC,MR,NR,loadC}
+    fill!(blk.AB, zero(eltype(blk.AB)))
+    @inbounds for k in 1:kc
+        for j in 1:NR, i in 1:MR
+            blk.AB[i + (j-1)*MR] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
+        end
+        offsetA += MR
+        offsetB += NR
+    end
+    if loadC
+        for j in 1:NR, i in 1:MR
+            blk.C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] += blk.AB[i + (j-1)*MR]
+        end
+    end
+    return nothing
+end
+
+@generated function _f64_8x6_micro_ker!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR},
+                    kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
+                    inc1C::Int, inc2C::Int,
+                    ::Val{loadC}) where {T1,T2,T3,T4,MC,KC,NC,MR,NR,loadC}
     quote
+        $(Expr(:meta, :inline))
         @inbounds begin
             pA, pAB = pointer(blk.Ac), pointer(blk.AB)
             T = eltype($T1); siz = sizeof(T)
