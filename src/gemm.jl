@@ -3,7 +3,7 @@ using SIMD
 import Base.Cartesian: @nexprs
 using StaticArrays: MMatrix
 
-micro_ker!(args...) = _generic_micro_ker!(args...)
+@inline micro_ker!(args...) = _generic_micro_ker!(args...)
 
 struct Block{T1,T2,T3,T4}
     Ac::T1
@@ -15,6 +15,12 @@ struct Block{T1,T2,T3,T4}
     nc::Int
     mr::Int
     nr::Int
+    inc1A::Int
+    inc2A::Int
+    inc1B::Int
+    inc2B::Int
+    inc1C::Int
+    inc2C::Int
 end
 function Block(A::X, B::W, C::Z) where {X, W, Z}
     mr=8; nr=6
@@ -26,8 +32,8 @@ function Block(A::X, B::W, C::Z) where {X, W, Z}
     Ac = Matrix{T}(undef, mr, mc*kc÷mr)
     Bc = Matrix{T}(undef, nr, kc*nc÷nr)
     AB = zero(MMatrix{mr, nr , T})
-    Block{typeof(Ac), typeof(Bc), typeof(AB),
-          typeof(C)}(Ac, Bc, AB, C, mc, kc, nc, mr, nr)
+    Block{typeof(Ac),typeof(Bc),typeof(AB),typeof(C)}(Ac, Bc, AB, C, mc, kc, nc, mr, nr,
+                                                      strides(A)..., strides(B)..., strides(C)...)
 end
 
 function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C)) where {T1,T2,T3,T4}
@@ -43,12 +49,12 @@ function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C)) where {T1,T2,T3
         for l in 1:kb # Loop 4
             kc = (l!=kb || _kc==0) ? blk.kc : _kc
             #_β = l==1 ? β : 1.0
-            offsetB = offsetM(B, blk.kc*(l-1), blk.nc*(j-1))
+            offsetB = blk.kc*(l-1)*blk.inc1B + blk.nc*(j-1)*blk.inc2B
             pack_B!(blk, B, kc, nc, offsetB)
             for i in 1:mb # Loop 3
                 mc = (i!=mb || _mc==0) ? blk.mc : _mc
-                offsetA = offsetM(A, blk.mc*(i-1), blk.kc*(l-1))
-                offsetC = offsetM(C, blk.mc*(i-1), blk.nc*(j-1))
+                offsetA = blk.mc*(i-1)*blk.inc1A + blk.kc*(l-1)*blk.inc2A
+                offsetC = blk.mc*(i-1)*blk.inc1C + blk.nc*(j-1)*blk.inc2C
                 pack_A!(blk, A, mc, kc, offsetA)
                 macro_ker!(blk, C, mc, nc, kc, offsetC)
             end # Loop 3
@@ -57,20 +63,14 @@ function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C)) where {T1,T2,T3
     C
 end
 
-@inline function offsetM(A, i, j)
-    inc1A, inc2A = stride(A, 1), stride(A, 2)
-    return i*inc1A + j*inc2A
-end
-
 @inline function pack_MRxK!(blk::Block{T1,T2,T3,T4}, A, k::Int,
                             offsetA::Int, offsetAc::Int) where {T1,T2,T3,T4}
-    inc1A, inc2A = stride(A, 1), stride(A, 2)
     @inbounds for j in 1:k
         for i in 1:blk.mr
-            blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A + 1]
+            blk.Ac[offsetAc+i] = A[offsetA + (i-1)*blk.inc1A + 1]
         end
         offsetAc += blk.mr
-        offsetA  += inc2A
+        offsetA  += blk.inc2A
     end
     return nothing
 end
@@ -78,23 +78,22 @@ end
 function pack_A!(blk::Block{T1,T2,T3,T4}, A, mc::Int, kc::Int,
                  offsetA::Int) where {T1,T2,T3,T4}
     mp, _mr = divrem(mc, blk.mr)
-    inc1A, inc2A = stride(A, 1), stride(A, 2)
     offsetAc = 0
     for i in 1:mp
         pack_MRxK!(blk, A, kc, offsetA, offsetAc)
         offsetAc += kc*blk.mr
-        offsetA  += blk.mr*inc1A
+        offsetA  += blk.mr*blk.inc1A
     end
     if _mr > 0
         @inbounds for j in 1:kc
             for i in 1:_mr
-                blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A + 1]
+                blk.Ac[offsetAc+i] = A[offsetA + (i-1)*blk.inc1A + 1]
             end
             for i in _mr+1:blk.mr
                 blk.Ac[offsetAc+i] = zero(eltype(A))
             end
             offsetAc += blk.mr
-            offsetA  += inc2A
+            offsetA  += blk.inc2A
         end
     end
     return nothing
@@ -102,13 +101,12 @@ end
 
 @inline function pack_KxNR!(blk::Block{T1,T2,T3,T4}, B, k::Int,
                             offsetB::Int, offsetBc::Int) where {T1,T2,T3,T4}
-    inc1B, inc2B = stride(B, 1), stride(B, 2)
     @inbounds for i = 1:k
         for j = 1:blk.nr
-            blk.Bc[offsetBc+j] = B[offsetB + (j-1)*inc2B + 1]
+            blk.Bc[offsetBc+j] = B[offsetB + (j-1)*blk.inc2B + 1]
         end
         offsetBc += blk.nr
-        offsetB  += inc1B
+        offsetB  += blk.inc1B
     end
     return nothing
 end
@@ -116,23 +114,22 @@ end
 function pack_B!(blk::Block{T1,T2,T3,T4}, B,
                  kc::Int, nc::Int, offsetB::Int) where {T1,T2,T3,T4}
     np, _nr = divrem(nc, blk.nr)
-    inc1B, inc2B = stride(B, 1), stride(B, 2)
     offsetBc = 0
     for j in 1:np
         pack_KxNR!(blk, B, kc, offsetB, offsetBc)
         offsetBc += kc*blk.nr
-        offsetB  += blk.nr*inc2B
+        offsetB  += blk.nr*blk.inc2B
     end
     if _nr > 0
         @inbounds for i in 1:kc
             for j in 1:_nr
-                blk.Bc[offsetBc+j] = B[offsetB + (j-1)*inc2B + 1]
+                blk.Bc[offsetBc+j] = B[offsetB + (j-1)*blk.inc2B + 1]
             end
             for j in _nr+1:blk.nr
                 blk.Bc[offsetBc+j] = zero(eltype(B))
             end
             offsetBc += blk.nr
-            offsetB  += inc1B
+            offsetB  += blk.inc1B
         end
     end
     return nothing
@@ -142,7 +139,6 @@ end
                             offsetC::Int) where {T1,T2,T3,T4}
     mp, _mr = cld(mc, blk.mr), mc % blk.mr
     np, _nr = cld(nc, blk.nr), nc % blk.nr
-    inc1C, inc2C = stride(C, 1), stride(C, 2)
     for j in 1:np
         nr = (j!=np || _nr==0) ? blk.nr : _nr
         for i in 1:mp
@@ -150,12 +146,10 @@ end
             offsetA = (i-1)*kc*blk.mr
             offsetB = (j-1)*kc*blk.nr
             if mr == blk.mr && nr==blk.nr
-                micro_ker!(blk, kc, offsetA, offsetB,
-                           offsetC+(i-1)*blk.mr*inc1C + (j-1)*blk.nr*inc2C,
-                           inc1C, inc2C, Val(true))
+                micro_ker!(blk, kc, offsetA, offsetB, offsetC+(i-1)*blk.mr*blk.inc1C + (j-1)*blk.nr*blk.inc2C, Val(true))
             else
-                micro_ker!(blk, kc, offsetA, offsetB, 0, 1, blk.mr, Val(false))
-                _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*blk.mr*inc1C + (j-1)*blk.nr*inc2C,
+                micro_ker!(blk, kc, offsetA, offsetB, 0, Val(false))
+                _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*blk.mr*blk.inc1C + (j-1)*blk.nr*blk.inc2C,
                        0, 1, blk.mr)
             end
         end
@@ -165,7 +159,6 @@ end
 
 @inline function _generic_micro_ker!(blk::Block{T1,T2,T3,T4}, kc::Int,
                                      offsetA::Int, offsetB::Int, offsetC::Int,
-                                     inc1C::Int, inc2C::Int,
                                      ::Val{loadC}) where {T1,T2,T3,T4,loadC}
     fill!(blk.AB, zero(eltype(blk.AB)))
     @inbounds for k in 1:kc
@@ -177,7 +170,7 @@ end
     end
     if loadC
         @inbounds for j in 1:blk.nr, i in 1:blk.mr
-            blk.C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] += blk.AB[i + (j-1)*blk.mr]
+            blk.C[offsetC+(i-1)*blk.inc1C+(j-1)*blk.inc2C+1] += blk.AB[i + (j-1)*blk.mr]
         end
     end
     return nothing
@@ -185,7 +178,6 @@ end
 
 @generated function _f64_8x6_micro_ker!(blk::Block{T1,T2,T3,T4},
                                         kc::Int, offsetA::Int, offsetB::Int, offsetC::Int,
-                                        inc1C::Int, inc2C::Int,
                                         ::Val{loadC}) where {T1,T2,T3,T4,loadC}
     quote
         $(Expr(:meta, :inline))
@@ -195,7 +187,7 @@ end
             VT = Vec{$blk.mr, T}
             if $loadC
                 pC = pointer(blk.C)
-                @nexprs $blk.nr i -> ab_i = vload(VT, pC + (offsetC+(i-1)*inc2C)siz)
+                @nexprs $blk.nr i -> ab_i = vload(VT, pC + (offsetC+(i-1)*blk.inc2C)siz)
             else
                 @nexprs $blk.nr i -> ab_i = zero(VT)
             end
@@ -207,7 +199,7 @@ end
                 end
             end
             if $loadC
-                @nexprs $blk.nr i -> vstore(ab_i, pC + (offsetC+(i-1)*inc2C)siz)
+                @nexprs $blk.nr i -> vstore(ab_i, pC + (offsetC+(i-1)*blk.inc2C)siz)
             else
                 @nexprs $blk.nr i -> vstore(ab_i, pAB + (i-1)blk.mr*siz)
             end
