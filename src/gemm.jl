@@ -1,4 +1,5 @@
-using SIMD, CpuId
+using SIMD
+# using CpuId
 import Base.Cartesian: @nexprs
 using StaticArrays: MMatrix
 
@@ -59,7 +60,7 @@ end
 @inline function pack_MRxK!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, A,
                             k::Int, offsetA::Int, offsetAc::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     inc1A, inc2A = stride(A, 1), stride(A, 2)
-    for j in 1:k
+    @inbounds for j in 1:k
         for i in 1:MR
             blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A + 1]
         end
@@ -80,7 +81,7 @@ function pack_A!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, A,
         offsetA  += MR*inc1A
     end
     if _mr > 0
-        for j in 1:kc
+        @inbounds for j in 1:kc
             for i in 1:_mr
                 blk.Ac[offsetAc+i] = A[offsetA + (i-1)*inc1A + 1]
             end
@@ -97,7 +98,7 @@ end
 @inline function pack_KxNR!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, B,
                             k::Int, offsetB::Int, offsetBc::Int) where {T1,T2,T3,T4,MC,KC,NC,MR,NR}
     inc1B, inc2B = stride(B, 1), stride(B, 2)
-    for i = 1:k
+    @inbounds for i = 1:k
         for j = 1:NR
             blk.Bc[offsetBc+j] = B[offsetB + (j-1)*inc2B + 1]
         end
@@ -118,7 +119,7 @@ function pack_B!(blk::Block{T1,T2,T3,T4,MC,KC,NC,MR,NR}, B,
         offsetB  += NR*inc2B
     end
     if _nr > 0
-        for i in 1:kc
+        @inbounds for i in 1:kc
             for j in 1:_nr
                 blk.Bc[offsetBc+j] = B[offsetB + (j-1)*inc2B + 1]
             end
@@ -167,7 +168,7 @@ end
         offsetB += NR
     end
     if loadC
-        for j in 1:NR, i in 1:MR
+        @inbounds for j in 1:NR, i in 1:MR
             blk.C[offsetC+(i-1)*inc1C+(j-1)*inc2C+1] += blk.AB[i + (j-1)*MR]
         end
     end
@@ -208,12 +209,10 @@ end
 end
 
 @inline function _axpy!(Y, α, X, m::Int, n::Int,
-                offsetY::Int, offsetX::Int, inc1X::Int, inc2X::Int)
+                 offsetY::Int, offsetX::Int, inc1X::Int, inc2X::Int)
     inc1Y, inc2Y = stride(Y, 1), stride(Y, 2)
-    for j in 1:n
-        @inbounds for i in 1:m
-            Y[offsetY+(i-1)*inc1Y+(j-1)*inc2Y+1] += α*X[offsetX+(i-1)*inc1X+(j-1)*inc2X+1]
-        end
+    @inbounds for j in 1:n, i in 1:m
+        Y[offsetY+(i-1)*inc1Y+(j-1)*inc2Y+1] += α*X[offsetX+(i-1)*inc1X+(j-1)*inc2X+1]
     end
     return nothing
 end
