@@ -7,7 +7,7 @@ xs = (1:N) .* 120
 for (i,siz) in enumerate(xs)
     A,B,C = (zeros(siz,siz) for i in 1:3)
     blk = Block(A,B,C)
-    jbtimes[i] = @belapsed mymul!($C,$A,$B,$blk)
+    jbtimes[i] = @belapsed addmul!($C,$A,$B,$blk)
     obtimes[i] = @belapsed mul!($C,$A,$B)
 end
 

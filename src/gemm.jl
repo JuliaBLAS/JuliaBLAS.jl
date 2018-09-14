@@ -38,7 +38,12 @@ function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
                                                       generic)
 end
 
-function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C, false)) where {T1,T2,T3,T4}
+"""
+    addmul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C, false)) -> C
+
+`addmul!` computs ``C = AB + C``, where ``A``, ``B``, and ``C`` are matrices.
+"""
+function addmul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C, false)) where {T1,T2,T3,T4}
     m,  k = size(A); _k, n = size(B)
     @assert k == _k
     _m, _n = size(C)
