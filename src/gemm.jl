@@ -38,7 +38,12 @@ function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
                                                       generic)
 end
 
-function mymul!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C, false)) where {T1,T2,T3,T4}
+
+function mymuladd!(C, A, B, generic::Bool=false)
+    mymuladd!(C, A, B, Block(A, B, C, generic))
+end
+
+function mymuladd!(C, A, B, blk::Block{T1,T2,T3,T4}=Block(A, B, C, false)) where {T1,T2,T3,T4}
     m,  k = size(A); _k, n = size(B)
     @assert k == _k
     _m, _n = size(C)

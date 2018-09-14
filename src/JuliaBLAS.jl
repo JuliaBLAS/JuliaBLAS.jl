@@ -2,6 +2,6 @@ module JuliaBLAS
 
 include("gemm.jl")
 
-export mymul!, Block
+export mymuladd!
 
 end
