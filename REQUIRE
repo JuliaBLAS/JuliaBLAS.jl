@@ -1,4 +1,2 @@
 julia 1.0
-# CpuId
 SIMD
-StaticArrays
