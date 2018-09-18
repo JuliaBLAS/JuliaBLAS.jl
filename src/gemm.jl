@@ -201,9 +201,9 @@ end
         if !blk.generic
             pA, pAB = pointer(blk.Ac), pointer(blk.AB)
             #T = eltype($T1); siz = sizeof(T)
-            siz = Float64 |> sizeof
+            siz = 8
             #VT = Vec{8, Float64}
-            VT = Vec{4, Float64}
+            VT = Vec{4, eltype(T1)}
             if loadC
                 pC = pointer(blk.C)
                 #@nexprs 6 i -> ab_i = vload(VT, pC + (offsetC+(i-1)*blk.inc2C)siz)
