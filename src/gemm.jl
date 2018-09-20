@@ -19,7 +19,7 @@ struct Block{T1,T2,T3,T4,G}
     inc2C::Int
 end
 
-const Ac = Vector{UInt8}(undef, 2350080)
+const Ac = Vector{UInt8}(undef, 110592)
 const Bc = Vector{UInt8}(undef, 6266880)
 const AB = Vector{UInt8}(undef, 12*4*8)
 
@@ -28,8 +28,8 @@ function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
     mr=12; nr=4
     m, n = size(C)
     mc = 72
-    nc = 192
-    kc = 4080
+    kc = 192
+    nc = 4080
     T = promote_type(eltype(X), eltype(W), eltype(Z))
     siz = sizeof(T)
     _Ac = unsafe_wrap(Array, Ptr{T}(pointer(Ac)), length(Ac)÷siz)
