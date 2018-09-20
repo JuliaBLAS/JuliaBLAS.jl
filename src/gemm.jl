@@ -182,7 +182,6 @@ end
             VT = Vec{4, T}
             if loadC
                 pC = pointer(blk.C)
-                #@nexprs 6 i -> ab_i = vload(VT, pC + (offsetC+(i-1)*blk.inc2C)siz)
                 @nexprs 4 i -> begin
                     ab_i_1 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C  )siz)
                     ab_i_2 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C+4)siz)
