@@ -4,7 +4,7 @@
 
 # It is still WIP!!!!
 
-![bench1.png](https://user-images.githubusercontent.com/17304743/45851404-b6db1800-bd08-11e8-8e8a-e4c02a3c39ee.png)
+![bench1](https://user-images.githubusercontent.com/17304743/53292180-c9142300-378c-11e9-9f41-8c10711af122.png)
 
 # Acknowledgement
 The `gemm` routine is based on
