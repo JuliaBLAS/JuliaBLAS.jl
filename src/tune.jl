@@ -32,7 +32,7 @@ function get_hw_params()
     nvfma = 1
 
     mr = ceil(Int, sqrt(nvec*lvfma*nvfma)/nvec)*nvec
-    nr = ceil(Int, nvec*lvfma*nvfma)
+    nr = ceil(Int, (nvec*lvfma*nvfma)/mr)
 
     car = floor(Int, (wl1 - 1)/(1+nr/mr))
     cbr = ceil(Int, nr*car/mr)
