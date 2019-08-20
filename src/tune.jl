@@ -1,4 +1,12 @@
 
+struct BlockAttributes
+    mc::Int
+    kc::Int
+    nc::Int
+    mr::Int
+    nr::Int
+end
+
 function get_hw_params()
     topology = Hwloc.topology_load()
     summary = Hwloc.getinfo(topology)
@@ -9,6 +17,29 @@ function get_hw_params()
     # assume L1 caches are of same attributes
     l1 = findcache(topology, :L1Cache).attr
     l1ct = countcache(topology, :L2Cache)
+
+    #defaults
+        mc = 72
+        kc = 192
+        nc = 4080
+
+    wl1 = div((l1.size*l1ct),l1.linesize)
+    # add + mul latency or FMA latency
+    lvfma = 5+3 # TODO: auto?
+    # 
+    nvec = 4
+    sdata = 64
+    nvfma = 1
+
+    mr = ceil(Int, sqrt(nvec*lvfma*nvfma)/nvec)*nvec
+    nr = ceil(Int, nvec*lvfma*nvfma)
+
+    car = floor(Int, (wl1 - 1)/(1+nr/mr))
+    cbr = ceil(Int, nr*car/mr)
+
+    #kc = car*l1.size*l1.linesize/(mr*sdata)
+
+    BlockAttributes(mc, kc, nc, mr, nr)
 end
 
 function findcache(v, sym)
