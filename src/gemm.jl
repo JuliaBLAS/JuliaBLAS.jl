@@ -1,5 +1,3 @@
-using SIMD
-import Base.Cartesian: @nexprs
 
 struct Block{T1,T2,T3,T4,G}
     Ac::T1
@@ -19,17 +17,22 @@ struct Block{T1,T2,T3,T4,G}
     inc2C::Int
 end
 
-const Ac = Vector{UInt8}(undef, 110592)
-const Bc = Vector{UInt8}(undef, 6266880)
-const AB = Vector{UInt8}(undef, 12*4*8)
+
+const block_attr = get_hw_params()
+@show block_attr
+
+const Ac = Vector{UInt8}(undef, block_attr.mc * block_attr.kc * 8)
+const Bc = Vector{UInt8}(undef, block_attr.kc * block_attr.nc * 8)
+const AB = Vector{UInt8}(undef, block_attr.nr * block_attr.mr * 8)
 
 function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
     global Ac, Bc, AB
-    mr=12; nr=4
+    global block_attr 
+    mr=block_attr.mr; nr=block_attr.nr
     m, n = size(C)
-    mc = 72
-    kc = 192
-    nc = 4080
+    mc = block_attr.mc
+    kc = block_attr.kc
+    nc = block_attr.nc
     T = promote_type(eltype(X), eltype(W), eltype(Z))
     siz = sizeof(T)
     _Ac = unsafe_wrap(Array, Ptr{T}(pointer(Ac)), length(Ac)÷siz)
