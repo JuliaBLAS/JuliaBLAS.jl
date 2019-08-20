@@ -10,7 +10,9 @@ BenchmarkTools.DEFAULT_PARAMETERS.seconds = 0.8
 for (i,siz) in enumerate(mnks)
     A,B,C = (zeros(siz,siz) for i in 1:3)
     blk = Block(A,B,C,false)
+    sleep(1)
     jbtimes[i] = @belapsed addmul!($C,$A,$B,$blk)
+    sleep(1)
     obtimes[i] = @belapsed mul!($C,$A,$B)
 end
 
@@ -20,4 +22,4 @@ jflops = time2gflops.(mnks, jbtimes)
 oflops = time2gflops.(mnks, obtimes)
 plot(mnks, jflops, lab="JuliaBLAS")
 plot!(mnks, oflops, lab="OpenBLAS", ylabel="GFLOPS", xlabel="M=N=K", legend=:bottomright, dpi=400, ylims=(0,40), yticks=0:5:40)
-savefig("bench1.png")
+savefig("bench7.png")

@@ -1,5 +1,3 @@
-using SIMD
-import Base.Cartesian: @nexprs
 
 struct Block{T1,T2,T3,T4,G}
     Ac::T1
