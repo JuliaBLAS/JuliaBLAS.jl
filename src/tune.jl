@@ -25,10 +25,10 @@ function get_hw_params()
 
     wl1 = div((l1.size*l1ct),l1.linesize)
     # add + mul latency or FMA latency
-    lvfma = 5+3 # TODO: auto?
+    lvfma = 5 # TODO: auto?
     # 
     nvec = 4
-    sdata = 64
+    sdata = 32 #AVX
     nvfma = 1
 
     mr = ceil(Int, sqrt(nvec*lvfma*nvfma)/nvec)*nvec

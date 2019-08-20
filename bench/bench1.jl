@@ -21,5 +21,5 @@ time2gflops(mnk, time) = 2 * mnk^3 / time / 10^9
 jflops = time2gflops.(mnks, jbtimes)
 oflops = time2gflops.(mnks, obtimes)
 plot(mnks, jflops, lab="JuliaBLAS")
-plot!(mnks, oflops, lab="OpenBLAS", ylabel="GFLOPS", xlabel="M=N=K", legend=:bottomright, dpi=400, ylims=(0,40), yticks=0:5:40)
-savefig("bench7.png")
+plot!(mnks, oflops, lab="OpenBLAS", ylabel="GFLOPS", xlabel="M=N=K", legend=:bottomright, dpi=400, ylims=(0,60), yticks=0:5:60)
+savefig("bench8.png")

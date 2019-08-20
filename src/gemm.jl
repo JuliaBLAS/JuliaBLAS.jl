@@ -30,9 +30,9 @@ function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
     global block_attr 
     mr=block_attr.mr; nr=block_attr.nr
     m, n = size(C)
-    mc = 72
-    kc = 192
-    nc = 4080
+    mc = block_attr.mc
+    kc = block_attr.kc
+    nc = block_attr.nc
     T = promote_type(eltype(X), eltype(W), eltype(Z))
     siz = sizeof(T)
     _Ac = unsafe_wrap(Array, Ptr{T}(pointer(Ac)), length(Ac)÷siz)
