@@ -1,6 +1,6 @@
 # JuliaBLAS
-[![Build Status](https://travis-ci.org/YingboMa/JuliaBLAS.jl.svg?branch=master)](https://travis-ci.org/YingboMa/JuliaBLAS.jl)
-[![codecov](https://codecov.io/gh/YingboMa/JuliaBLAS.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/YingboMa/JuliaBLAS.jl)
+[![Build Status](https://travis-ci.org/JuliaBLAS/JuliaBLAS.jl.svg?branch=master)](https://travis-ci.org/JuliaBLAS/JuliaBLAS.jl)
+[![codecov](https://codecov.io/gh/JuliaBLAS/JuliaBLAS.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/JuliaBLAS/JuliaBLAS.jl)
 
 # It is still WIP!!!!
 
