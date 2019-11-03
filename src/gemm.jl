@@ -1,5 +1,5 @@
 using SIMD
-import Base.Cartesian: @nexprs
+using Base.Cartesian: @nexprs
 
 struct Block{T1,T2,T3,T4,G}
     Ac::T1
@@ -165,76 +165,57 @@ end
     return nothing
 end
 
-@inline function micro_ker!(blk::Block{T1,T2,T3,T4,G}, kc::Int,
-                                     offsetA::Int, offsetB::Int, offsetC::Int,
-                                     ::Val{loadC}) where {T1,T2,T3,T4,G,loadC}
-    #expr = kernel_quote(T1, 8, 6, loadC)
-    #quote
-    #    $(Expr(:meta, :inline))
-    #    @assert blk.mr == 8 && blk.nr == 6
-    #    $expr
-    #end
+@inline function micro_ker!(blk::Block{T1,T2,T3,T4,true}, kc::Int,
+                            offsetA::Int, offsetB::Int, offsetC::Int,
+                            ::Val{loadC}) where {T1,T2,T3,T4,G,loadC}
     @inbounds begin
-        if !G
-            pA, pAB = pointer(blk.Ac), pointer(blk.AB)
-            T = eltype(T1)
-            siz = 8
-            VT = Vec{4, T}
-            if loadC
-                pC = pointer(blk.C)
-                @nexprs 4 i -> begin
-                    ab_i_1 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C  )siz)
-                    ab_i_2 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C+4)siz)
-                    ab_i_3 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C+8)siz)
-                end
-            else
-                @nexprs 4 i -> begin
-                    ab_i_1 = zero(VT)
-                    ab_i_2 = zero(VT)
-                    ab_i_3 = zero(VT)
-                end
+        fill!(blk.AB, zero(eltype(blk.AB)))
+        for k in 1:kc
+            for j in 1:blk.nr, i in 1:blk.mr
+                blk.AB[i + (j-1)*blk.mr] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
             end
-            for k in 1:kc
-                a1 = vload(VT, pA + (offsetA+blk.mr*(k-1))siz)
-                a2 = vload(VT, pA + (offsetA+blk.mr*(k-1)+4)siz)
-                a3 = vload(VT, pA + (offsetA+blk.mr*(k-1)+8)siz)
-                @nexprs 4 i -> begin
-                    b_i = VT(blk.Bc[offsetB+(k-1)blk.nr+i])
-                    ab_i_1 = muladd(a1, b_i, ab_i_1)
-                    ab_i_2 = muladd(a2, b_i, ab_i_2)
-                    ab_i_3 = muladd(a3, b_i, ab_i_3)
-                end
-            end
-            if loadC
-                @nexprs 4 i -> begin
-                    vstore(ab_i_1, pC + (offsetC+(i-1)*blk.inc2C)siz)
-                    vstore(ab_i_2, pC + (offsetC+(i-1)*blk.inc2C+4)siz)
-                    vstore(ab_i_3, pC + (offsetC+(i-1)*blk.inc2C+8)siz)
-                end
-            else
-                @nexprs 4 i -> begin
-                    vstore(ab_i_1, pAB + (i-1)blk.mr*siz)
-                    vstore(ab_i_2, pAB + ((i-1)blk.mr+4)*siz)
-                    vstore(ab_i_3, pAB + ((i-1)blk.mr+8)*siz)
-                end
-            end
-        else
-            fill!(blk.AB, zero(eltype(blk.AB)))
-            for k in 1:kc
-                for j in 1:blk.nr, i in 1:blk.mr
-                    blk.AB[i + (j-1)*blk.mr] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
-                end
-                offsetA += blk.mr
-                offsetB += blk.nr
-            end
-            if loadC
-                for j in 1:blk.nr, i in 1:blk.mr
-                    blk.C[offsetC+(i-1)*blk.inc1C+(j-1)*blk.inc2C+1] += blk.AB[i + (j-1)*blk.mr]
-                end
+            offsetA += blk.mr
+            offsetB += blk.nr
+        end
+        if loadC
+            for j in 1:blk.nr, i in 1:blk.mr
+                blk.C[offsetC+(i-1)*blk.inc1C+(j-1)*blk.inc2C+1] += blk.AB[i + (j-1)*blk.mr]
             end
         end
-        return nothing
     end
+    return nothing
+end
+
+@inline function micro_ker!(blk::Block{T1,T2,T3,T4,false}, kc::Int,
+                            offsetA::Int, offsetB::Int, offsetC::Int,
+                            ::Val{loadC}) where {T1,T2,T3,T4,G,loadC}
+    width = 4
+    nr = 4
+    mr = 12÷width
+    @inbounds begin
+        pA, pAB = pointer(blk.Ac), pointer(blk.AB)
+        T = eltype(T1)
+        siz = sizeof(T)
+        VT = Vec{width, T}
+        pC = pointer(blk.C)
+        @nexprs 4 i -> #= nr =#
+            @nexprs 3 j -> #= mr =#
+                ab_i_j = loadC ? vload(VT, pC + (offsetC+(i-1)*blk.inc2C+(j-1)*width)siz) :
+                                 zero(VT)
+        for k in 1:kc
+            @nexprs 3 j -> #= mr =# a_j = vload(VT, pA + (offsetA+blk.mr*(k-1)+(j-1)width)siz)
+            @nexprs 4 i -> begin # nr
+                b_i = VT(blk.Bc[offsetB+(k-1)blk.nr+i])
+                @nexprs 3 j -> #= mr =# ab_i_j = muladd(a_j, b_i, ab_i_j)
+            end
+        end
+        @nexprs 4 i -> #= nr =# @nexprs 3 j -> begin # mr
+            ptr = loadC ? pC + (offsetC+(i-1)*blk.inc2C+(j-1)*width)siz :
+                          pAB + ((i-1)blk.mr + (j-1)*width)*siz
+            vstore(ab_i_j, ptr)
+        end
+    end
+    return nothing
 end
 
 @inline function _axpy!(Y, α, X, m::Int, n::Int,
