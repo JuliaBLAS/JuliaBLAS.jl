@@ -12,12 +12,12 @@ function matmul_test(name, datagen, generic_only = false)
             @test true # ensure base functionality doesn't error out before here
 
             if !generic_only
-                addmul!(C, A, B, Block(A,B,C,false))
+                addmul!(C, A, B, generic=Val(false))
                 @test C ≈ ABC
             end
 
             ABC = A*B + C
-            addmul!(C, A, B, Block(A,B,C,true))
+            addmul!(C, A, B, generic=Val(true))
             @test C ≈ ABC
         end
     end
