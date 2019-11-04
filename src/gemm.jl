@@ -42,7 +42,7 @@ getnr(blk::Block{W,MR,NR}) where {W,MR,NR} = NR
 
 `addmul!` computes ``C = AB + C``, where ``A``, ``B``, and ``C`` are matrices.
 """
-function addmul!(C, A, B; width=Val(4), mr=Val(12), nr=Val(4), generic=Val(false))
+function addmul!(C, A, B; width=Val(4), mr=Val(8), nr=Val(6), generic=Val(false))
     blk = Block(A, B, C, width, mr, nr, generic)
     m,  k = size(A); _k, n = size(B)
     @assert k == _k
@@ -193,6 +193,7 @@ end
     quote
         @inbounds begin
             pA, pAB = pointer(blk.Ac), pointer(blk.AB)
+            pB = pointer(blk.Bc)
             T = eltype(T1)
             siz = sizeof(T)
             VT = Vec{$Width, T}
@@ -202,12 +203,18 @@ end
                     ab_i_j = loadC ? vload(VT, pC + (offsetC+(i-1)*blk.inc2C+(j-1)*$Width)siz) :
                                      zero(VT)
             for k in 1:kc
+                # TODO: prefetching
+                #_prefetch_r(pA + (offsetA+$MR*(k+2))siz)
+                #_prefetch_r(pB + (offsetB+(k+2)*$NR)siz)
+                #_prefetch_r(pA + (offsetA+$MR*(k-1))siz + 512)
+                #_prefetch_r(pB + (offsetB+$NR*(k-1))siz + 512)
                 @nexprs $mr j -> a_j = vload(VT, pA + (offsetA+$MR*(k-1)+(j-1)*$Width)siz)
                 @nexprs $NR i -> begin
                     b_i = VT(blk.Bc[offsetB+(k-1)*$NR+i])
-                    @nexprs 3 j -> ab_i_j = muladd(a_j, b_i, ab_i_j)
+                    @nexprs $mr j -> ab_i_j = muladd(a_j, b_i, ab_i_j)
                 end
             end
+            #loadC && _prefetch_r(pC + offsetC*siz + 512)
             @nexprs $NR i ->
                 @nexprs $mr j -> begin
                     ptr = loadC ? pC + (offsetC+(i-1)*blk.inc2C+(j-1)*$Width)siz :
