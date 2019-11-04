@@ -8,31 +8,42 @@ function matmul_test(name, datagen, generic_only = false)
             C = datagen(m, n)
             A = datagen(m, k)
             B = datagen(k, n)
-            ABC = A*B + C
             @test true # ensure base functionality doesn't error out before here
 
             if !generic_only
-                addmul!(C, A, B, Block(A,B,C,false))
+                ABC = A*B + C
+                addmul!(C, A, B, generic=Val(false), mr=Val(12), nr=Val(4))
+                @test C ≈ ABC
+                ABC = A*B + C
+                addmul!(C, A, B, generic=Val(false), mr=Val(8), nr=Val(6))
+                @test C ≈ ABC
+                ABC = A*B + C
+                addmul!(C, A, B, generic=Val(false), mr=Val(4), nr=Val(4))
                 @test C ≈ ABC
             end
 
             ABC = A*B + C
-            addmul!(C, A, B, Block(A,B,C,true))
+            addmul!(C, A, B, generic=Val(true), mr=Val(12), nr=Val(4))
+            @test C ≈ ABC
+            ABC = A*B + C
+            addmul!(C, A, B, generic=Val(true), mr=Val(8), nr=Val(6))
+            @test C ≈ ABC
+            ABC = A*B + C
+            addmul!(C, A, B, generic=Val(true), mr=Val(4), nr=Val(4))
             @test C ≈ ABC
         end
     end
 end
 
-matmul_test.([Int,
+matmul_test.([
+              Int64,
+              Int32,
+              UInt64,
+              UInt32,
               Float64,
-              UInt,
+              Float32,
              ],
               randn)
-matmul_test.([Int32,
-              Float32,
-              UInt32,
-             ],
-              randn, true)
 
 # Weird type, with weird math
 #struct Stringish

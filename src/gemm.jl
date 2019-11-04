@@ -1,16 +1,14 @@
 using SIMD
-import Base.Cartesian: @nexprs
+using Base.Cartesian: @nexprs
 
-struct Block{T1,T2,T3,T4,G}
-    Ac::T1
-    Bc::T2
-    AB::T3
-    C::T4
+struct Block{W,MR,NR,G,TA,TB,TAB,TC}
+    Ac::TA
+    Bc::TB
+    AB::TAB
+    C::TC
     mc::Int
     kc::Int
     nc::Int
-    mr::Int
-    nr::Int
     inc1A::Int
     inc2A::Int
     inc1B::Int
@@ -21,30 +19,31 @@ end
 
 const Ac = Vector{UInt8}(undef, 110592)
 const Bc = Vector{UInt8}(undef, 6266880)
-const AB = Vector{UInt8}(undef, 12*4*8)
+const AB = Vector{UInt8}(undef, 1 << 12)
 
-function Block(A::X, B::W, C::Z, generic) where {X, W, Z}
+function Block(A::X, B::Y, C::Z, ::Val{Width}, ::Val{MR}, ::Val{NR}, ::Val{Generic}) where {X,Y,Z,Width,MR,NR,Generic}
     global Ac, Bc, AB
-    mr=12; nr=4
     m, n = size(C)
     mc = 72
     kc = 192
     nc = 4080
-    T = promote_type(eltype(X), eltype(W), eltype(Z))
+    T = promote_type(eltype(X), eltype(Y), eltype(Z))
     siz = sizeof(T)
     _Ac = unsafe_wrap(Array, Ptr{T}(pointer(Ac)), length(Ac)÷siz)
     _Bc = unsafe_wrap(Array, Ptr{T}(pointer(Bc)), length(Bc)÷siz)
     _AB = unsafe_wrap(Array, Ptr{T}(pointer(AB)), length(AB)÷siz)
-    Block{typeof(_Ac),typeof(_Bc),typeof(_AB),typeof(C),generic}(_Ac, _Bc, _AB, C, mc, kc, nc, mr, nr,
-                                                      strides(A)..., strides(B)..., strides(C)...,)
+    Block{Width,MR,NR,Generic,typeof(_Ac),typeof(_Bc),typeof(_AB),typeof(C)}(_Ac, _Bc, _AB, C, mc, kc, nc, strides(A)..., strides(B)..., strides(C)...,)
 end
+getmr(blk::Block{W,MR,NR}) where {W,MR,NR} = MR
+getnr(blk::Block{W,MR,NR}) where {W,MR,NR} = NR
 
 """
-    addmul!(C, A, B, blk::Block{T1,T2,T3,T4,G}=Block(A, B, C, false)) -> C
+    addmul!(C, A, B, blk::Block=Block(A, B, C, false)) -> C
 
-`addmul!` computs ``C = AB + C``, where ``A``, ``B``, and ``C`` are matrices.
+`addmul!` computes ``C = AB + C``, where ``A``, ``B``, and ``C`` are matrices.
 """
-function addmul!(C, A, B, blk::Block{T1,T2,T3,T4,G}=Block(A, B, C, false)) where {T1,T2,T3,T4,G}
+function addmul!(C, A, B; width=Val(4), mr=Val(8), nr=Val(6), generic=Val(false))
+    blk = Block(A, B, C, width, mr, nr, generic)
     m,  k = size(A); _k, n = size(B)
     @assert k == _k
     _m, _n = size(C)
@@ -71,170 +70,160 @@ function addmul!(C, A, B, blk::Block{T1,T2,T3,T4,G}=Block(A, B, C, false)) where
     C
 end
 
-@inline function pack_MRxK!(blk::Block{T1,T2,T3,T4,G}, A, k::Int,
-                            offsetA::Int, offsetAc::Int) where {T1,T2,T3,T4,G}
+@inline function pack_MRxK!(blk::Block, A, k::Int, offsetA::Int, offsetAc::Int)
+    mr = getmr(blk)
     @inbounds for j in 1:k
-        for i in 1:blk.mr
+        for i in 1:mr
             blk.Ac[offsetAc+i] = A[offsetA + (i-1)*blk.inc1A + 1]
         end
-        offsetAc += blk.mr
+        offsetAc += mr
         offsetA  += blk.inc2A
     end
     return nothing
 end
 
-function pack_A!(blk::Block{T1,T2,T3,T4,G}, A, mc::Int, kc::Int,
-                 offsetA::Int) where {T1,T2,T3,T4,G}
-    mp, _mr = divrem(mc, blk.mr)
+function pack_A!(blk::Block, A, mc::Int, kc::Int, offsetA::Int)
+    mr = getmr(blk)
+    mp, _mr = divrem(mc, mr)
     offsetAc = 0
     for i in 1:mp
         pack_MRxK!(blk, A, kc, offsetA, offsetAc)
-        offsetAc += kc*blk.mr
-        offsetA  += blk.mr*blk.inc1A
+        offsetAc += kc*mr
+        offsetA  += mr*blk.inc1A
     end
     if _mr > 0
         @inbounds for j in 1:kc
             for i in 1:_mr
                 blk.Ac[offsetAc+i] = A[offsetA + (i-1)*blk.inc1A + 1]
             end
-            for i in _mr+1:blk.mr
+            for i in _mr+1:mr
                 blk.Ac[offsetAc+i] = zero(eltype(A))
             end
-            offsetAc += blk.mr
+            offsetAc += mr
             offsetA  += blk.inc2A
         end
     end
     return nothing
 end
 
-@inline function pack_KxNR!(blk::Block{T1,T2,T3,T4,G}, B, k::Int,
-                            offsetB::Int, offsetBc::Int) where {T1,T2,T3,T4,G}
+@inline function pack_KxNR!(blk::Block, B, k::Int, offsetB::Int, offsetBc::Int)
+    nr = getnr(blk)
     @inbounds for i = 1:k
-        for j = 1:blk.nr
+        for j = 1:nr
             blk.Bc[offsetBc+j] = B[offsetB + (j-1)*blk.inc2B + 1]
         end
-        offsetBc += blk.nr
+        offsetBc += nr
         offsetB  += blk.inc1B
     end
     return nothing
 end
 
-function pack_B!(blk::Block{T1,T2,T3,T4,G}, B,
-                 kc::Int, nc::Int, offsetB::Int) where {T1,T2,T3,T4,G}
-    np, _nr = divrem(nc, blk.nr)
+function pack_B!(blk::Block, B, kc::Int, nc::Int, offsetB::Int)
+    nr = getnr(blk)
+    np, _nr = divrem(nc, nr)
     offsetBc = 0
     for j in 1:np
         pack_KxNR!(blk, B, kc, offsetB, offsetBc)
-        offsetBc += kc*blk.nr
-        offsetB  += blk.nr*blk.inc2B
+        offsetBc += kc*nr
+        offsetB  += nr*blk.inc2B
     end
     if _nr > 0
         @inbounds for i in 1:kc
             for j in 1:_nr
                 blk.Bc[offsetBc+j] = B[offsetB + (j-1)*blk.inc2B + 1]
             end
-            for j in _nr+1:blk.nr
+            for j in _nr+1:nr
                 blk.Bc[offsetBc+j] = zero(eltype(B))
             end
-            offsetBc += blk.nr
+            offsetBc += nr
             offsetB  += blk.inc1B
         end
     end
     return nothing
 end
 
-@inline function macro_ker!(blk::Block{T1,T2,T3,T4,G}, C, mc::Int, nc::Int, kc::Int,
-                            offsetC::Int) where {T1,T2,T3,T4,G}
-    mp, _mr = cld(mc, blk.mr), mc % blk.mr
-    np, _nr = cld(nc, blk.nr), nc % blk.nr
+@inline function macro_ker!(blk::Block, C, mc::Int, nc::Int, kc::Int, offsetC::Int)
+    mr′, nr′ = getmr(blk), getnr(blk)
+    mp, _mr = cld(mc, mr′), mc % mr′
+    np, _nr = cld(nc, nr′), nc % nr′
     for j in 1:np
-        nr = (j!=np || _nr==0) ? blk.nr : _nr
+        nr = (j!=np || _nr==0) ? nr′ : _nr
         for i in 1:mp
-            mr = (i!=mp || _mr==0) ? blk.mr : _mr
-            offsetA = (i-1)*kc*blk.mr
-            offsetB = (j-1)*kc*blk.nr
-            if mr == blk.mr && nr==blk.nr
-                micro_ker!(blk, kc, offsetA, offsetB, offsetC+(i-1)*blk.mr*blk.inc1C + (j-1)*blk.nr*blk.inc2C, Val(true))
+            mr = (i!=mp || _mr==0) ? mr′ : _mr
+            offsetA = (i-1)*kc*mr′
+            offsetB = (j-1)*kc*nr′
+            if mr == mr′ && nr == nr′
+                micro_ker!(blk, kc, offsetA, offsetB, offsetC+(i-1)*mr′*blk.inc1C + (j-1)*nr′*blk.inc2C, Val(true))
             else
                 micro_ker!(blk, kc, offsetA, offsetB, 0, Val(false))
-                _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*blk.mr*blk.inc1C + (j-1)*blk.nr*blk.inc2C,
-                       0, 1, blk.mr)
+                _axpy!(C, 1, blk.AB, mr, nr, offsetC+(i-1)*mr′*blk.inc1C + (j-1)*nr′*blk.inc2C,
+                       0, 1, mr′)
             end
         end
     end
     return nothing
 end
 
-@inline function micro_ker!(blk::Block{T1,T2,T3,T4,G}, kc::Int,
-                                     offsetA::Int, offsetB::Int, offsetC::Int,
-                                     ::Val{loadC}) where {T1,T2,T3,T4,G,loadC}
-    #expr = kernel_quote(T1, 8, 6, loadC)
-    #quote
-    #    $(Expr(:meta, :inline))
-    #    @assert blk.mr == 8 && blk.nr == 6
-    #    $expr
-    #end
+# generic
+@inline function micro_ker!(blk::Block{<:Any,<:Any,<:Any,true}, kc::Int, offsetA::Int, offsetB::Int, offsetC::Int, ::Val{loadC}) where loadC
+    mr, nr = getmr(blk), getnr(blk)
     @inbounds begin
-        if !G
-            pA, pAB = pointer(blk.Ac), pointer(blk.AB)
-            T = eltype(T1)
-            siz = 8
-            VT = Vec{4, T}
-            if loadC
-                pC = pointer(blk.C)
-                @nexprs 4 i -> begin
-                    ab_i_1 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C  )siz)
-                    ab_i_2 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C+4)siz)
-                    ab_i_3 = vload(VT, pC + (offsetC+(i-1)*blk.inc2C+8)siz)
-                end
-            else
-                @nexprs 4 i -> begin
-                    ab_i_1 = zero(VT)
-                    ab_i_2 = zero(VT)
-                    ab_i_3 = zero(VT)
-                end
+        fill!(blk.AB, zero(eltype(blk.AB)))
+        for k in 1:kc
+            for j in 1:nr, i in 1:mr
+                blk.AB[i + (j-1)*mr] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
             end
-            for k in 1:kc
-                a1 = vload(VT, pA + (offsetA+blk.mr*(k-1))siz)
-                a2 = vload(VT, pA + (offsetA+blk.mr*(k-1)+4)siz)
-                a3 = vload(VT, pA + (offsetA+blk.mr*(k-1)+8)siz)
-                @nexprs 4 i -> begin
-                    b_i = VT(blk.Bc[offsetB+(k-1)blk.nr+i])
-                    ab_i_1 = muladd(a1, b_i, ab_i_1)
-                    ab_i_2 = muladd(a2, b_i, ab_i_2)
-                    ab_i_3 = muladd(a3, b_i, ab_i_3)
-                end
-            end
-            if loadC
-                @nexprs 4 i -> begin
-                    vstore(ab_i_1, pC + (offsetC+(i-1)*blk.inc2C)siz)
-                    vstore(ab_i_2, pC + (offsetC+(i-1)*blk.inc2C+4)siz)
-                    vstore(ab_i_3, pC + (offsetC+(i-1)*blk.inc2C+8)siz)
-                end
-            else
-                @nexprs 4 i -> begin
-                    vstore(ab_i_1, pAB + (i-1)blk.mr*siz)
-                    vstore(ab_i_2, pAB + ((i-1)blk.mr+4)*siz)
-                    vstore(ab_i_3, pAB + ((i-1)blk.mr+8)*siz)
-                end
-            end
-        else
-            fill!(blk.AB, zero(eltype(blk.AB)))
-            for k in 1:kc
-                for j in 1:blk.nr, i in 1:blk.mr
-                    blk.AB[i + (j-1)*blk.mr] += blk.Ac[offsetA+i] * blk.Bc[offsetB+j]
-                end
-                offsetA += blk.mr
-                offsetB += blk.nr
-            end
-            if loadC
-                for j in 1:blk.nr, i in 1:blk.mr
-                    blk.C[offsetC+(i-1)*blk.inc1C+(j-1)*blk.inc2C+1] += blk.AB[i + (j-1)*blk.mr]
-                end
+            offsetA += mr
+            offsetB += nr
+        end
+        if loadC
+            for j in 1:nr, i in 1:mr
+                blk.C[offsetC+(i-1)*blk.inc1C+(j-1)*blk.inc2C+1] += blk.AB[i + (j-1)*mr]
             end
         end
-        return nothing
     end
+    return nothing
+end
+
+# SIMD
+@inline @generated function micro_ker!(blk::Block{Width,MR,NR,false,T1}, kc::Int, # TODO: mixed-precision
+                            offsetA::Int, offsetB::Int, offsetC::Int,
+                            ::Val{loadC}) where {Width,MR,NR,Generic,T1,loadC}
+    mr = MR÷Width
+    quote
+        @inbounds begin
+            pA, pAB = pointer(blk.Ac), pointer(blk.AB)
+            pB = pointer(blk.Bc)
+            T = eltype(T1)
+            siz = sizeof(T)
+            VT = Vec{$Width, T}
+            pC = pointer(blk.C)
+            @nexprs $NR i ->
+                @nexprs $mr j ->
+                    ab_i_j = loadC ? vload(VT, pC + (offsetC+(i-1)*blk.inc2C+(j-1)*$Width)siz) :
+                                     zero(VT)
+            for k in 1:kc
+                # TODO: prefetching
+                #_prefetch_r(pA + (offsetA+$MR*(k+2))siz)
+                #_prefetch_r(pB + (offsetB+(k+2)*$NR)siz)
+                #_prefetch_r(pA + (offsetA+$MR*(k-1))siz + 512)
+                #_prefetch_r(pB + (offsetB+$NR*(k-1))siz + 512)
+                @nexprs $mr j -> a_j = vload(VT, pA + (offsetA+$MR*(k-1)+(j-1)*$Width)siz)
+                @nexprs $NR i -> begin
+                    b_i = VT(blk.Bc[offsetB+(k-1)*$NR+i])
+                    @nexprs $mr j -> ab_i_j = muladd(a_j, b_i, ab_i_j)
+                end
+            end
+            #loadC && _prefetch_r(pC + offsetC*siz + 512)
+            @nexprs $NR i ->
+                @nexprs $mr j -> begin
+                    ptr = loadC ? pC + (offsetC+(i-1)*blk.inc2C+(j-1)*$Width)siz :
+                                  pAB + ((i-1)*$MR + (j-1)*$Width)*siz
+                    vstore(ab_i_j, ptr)
+                end
+        end
+        return nothing
+    end #quote
 end
 
 @inline function _axpy!(Y, α, X, m::Int, n::Int,

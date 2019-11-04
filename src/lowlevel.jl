@@ -13,7 +13,7 @@
                    call void @llvm.prefetch(i8* %ptr, i32 %1, i32 %2, i32 %3)
                    ret void
                    """),
-                  Void, Tuple{UInt64, Int32, Int32, Int32},
+                  Nothing, Tuple{UInt64, Int32, Int32, Int32},
                   UInt64(address), Int32(rw), Int32(locality), Int32(cachetype))
 end
 
